@@ -53,9 +53,37 @@ def create_rounded_rect(canvas, x1, y1, x2, y2, radius, **kwargs):
 tk.Canvas.create_rounded_rect = create_rounded_rect
 
 
+class ScrollableFrame(tk.Frame):
+    def __init__(self, parent, bg="#0a0a0a", **kwargs):
+        super().__init__(parent, bg=bg, **kwargs)
+        
+        self.canvas = tk.Canvas(self, bg=bg, highlightthickness=0)
+        self.scrollbar = tk.Scrollbar(self, orient="vertical", command=self.canvas.yview, width=6)
+        self.scrollbar.configure(bg="#2a2a2a", troughcolor="#151515", activebackground="#4a4a4a", bd=0)
+        
+        self.scrollable_frame = tk.Frame(self.canvas, bg=bg)
+        
+        self.scrollable_frame.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
+        
+        self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+        
+        self.canvas.pack(side="left", fill="both", expand=True)
+        self.scrollbar.pack(side="right", fill="y")
+        
+        self.bind_mousewheel()
+    
+    def bind_mousewheel(self):
+        def on_mousewheel(event):
+            self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        
+        self.canvas.bind("<Enter>", lambda e: self.canvas.bind_all("<MouseWheel>", on_mousewheel))
+        self.canvas.bind("<Leave>", lambda e: self.canvas.unbind_all("<MouseWheel>"))
+
+
 class RoundedButton(tk.Canvas):
     def __init__(self, parent, text="", bg="#2a2a2a", fg="#ffffff", hover_bg="#3a3a3a", 
-                 radius=12, command=None, font_size=10, **kwargs):
+                 radius=12, command=None, font_size=10, padding_x=20, **kwargs):
         super().__init__(parent, bg=parent["bg"], highlightthickness=0, **kwargs)
         self.bg_color = bg
         self.fg_color = fg
@@ -64,12 +92,15 @@ class RoundedButton(tk.Canvas):
         self.command = command
         self.text = text
         self.font_size = font_size
+        self.padding_x = padding_x
         self.is_hovered = False
+        self.is_pressed = False
         
         self.bind("<Configure>", self._on_configure)
         self.bind("<Enter>", self._on_enter)
         self.bind("<Leave>", self._on_leave)
-        self.bind("<Button-1>", self._on_click)
+        self.bind("<Button-1>", self._on_press)
+        self.bind("<ButtonRelease-1>", self._on_release)
     
     def _on_configure(self, event):
         self._draw()
@@ -78,22 +109,192 @@ class RoundedButton(tk.Canvas):
         self.delete("all")
         w, h = self.winfo_width(), self.winfo_height()
         if w > 1 and h > 1:
-            bg = self.hover_bg if self.is_hovered else self.bg_color
+            if self.is_pressed:
+                bg = self._darken_color(self.hover_bg)
+            elif self.is_hovered:
+                bg = self.hover_bg
+            else:
+                bg = self.bg_color
             self.create_rounded_rect(0, 0, w, h, self.radius, fill=bg, outline="")
             self.create_text(w//2, h//2, text=self.text, fill=self.fg_color, 
                            font=("Segoe UI", self.font_size, "bold"))
     
+    def _darken_color(self, color):
+        if color.startswith("#"):
+            r, g, b = int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
+            r = max(0, r - 20)
+            g = max(0, g - 20)
+            b = max(0, b - 20)
+            return f"#{r:02x}{g:02x}{b:02x}"
+        return color
+    
     def _on_enter(self, event):
         self.is_hovered = True
         self._draw()
+        self.config(cursor="hand2")
     
     def _on_leave(self, event):
         self.is_hovered = False
+        self.is_pressed = False
+        self._draw()
+        self.config(cursor="")
+    
+    def _on_press(self, event):
+        self.is_pressed = True
         self._draw()
     
-    def _on_click(self, event):
+    def _on_release(self, event):
+        self.is_pressed = False
+        self._draw()
         if self.command:
             self.command()
+
+
+class HoverLabel(tk.Label):
+    def __init__(self, parent, hover_color="#ffffff", **kwargs):
+        super().__init__(parent, **kwargs)
+        self.default_fg = kwargs.get("fg", "#888888")
+        self.hover_color = hover_color
+        self.bind("<Enter>", self._on_enter)
+        self.bind("<Leave>", self._on_leave)
+        self.config(cursor="hand2")
+    
+    def _on_enter(self, event):
+        self.config(fg=self.hover_color)
+    
+    def _on_leave(self, event):
+        self.config(fg=self.default_fg)
+
+
+class ModernCombobox(tk.Frame):
+    def __init__(self, parent, values=None, default="", width=25, **kwargs):
+        super().__init__(parent, bg="#0a0a0a", **kwargs)
+        self.values = values or []
+        self.var = tk.StringVar(value=default)
+        self.is_open = False
+        
+        self.button_frame = RoundedFrame(self, bg="#151515", radius=12)
+        self.button_frame.pack(fill="x")
+        
+        self.button_inner = tk.Frame(self.button_frame.inner_frame, bg="#151515")
+        self.button_inner.pack(fill="both", padx=14, pady=8)
+        
+        self.label = tk.Label(self.button_inner, textvariable=self.var, font=("Segoe UI", 11),
+                              bg="#151515", fg="#ffffff", anchor="w")
+        self.label.pack(side="left", fill="x", expand=True)
+        
+        self.arrow = tk.Label(self.button_inner, text="▼", font=("Segoe UI", 9),
+                              bg="#151515", fg="#888888")
+        self.arrow.pack(side="right")
+        
+        self.label.bind("<Enter>", self._on_enter)
+        self.label.bind("<Leave>", self._on_leave)
+        self.label.bind("<Button-1>", self._toggle)
+        self.arrow.bind("<Enter>", self._on_enter)
+        self.arrow.bind("<Leave>", self._on_leave)
+        self.arrow.bind("<Button-1>", self._toggle)
+        
+        self.dropdown = None
+    
+    def _on_enter(self, event):
+        self.button_frame.canvas.configure(bg="#1a1a1a")
+        self.button_inner.configure(bg="#1a1a1a")
+        self.label.configure(bg="#1a1a1a")
+        self.arrow.configure(bg="#1a1a1a")
+        self.config(cursor="hand2")
+    
+    def _on_leave(self, event):
+        if not self.is_open:
+            self.button_frame.canvas.configure(bg="#151515")
+            self.button_inner.configure(bg="#151515")
+            self.label.configure(bg="#151515")
+            self.arrow.configure(bg="#151515")
+        self.config(cursor="")
+    
+    def _toggle(self, event=None):
+        if self.is_open:
+            self._close_dropdown()
+        else:
+            self._open_dropdown()
+    
+    def _open_dropdown(self):
+        if self.dropdown:
+            self._close_dropdown()
+        
+        self.is_open = True
+        self.arrow.config(text="▲")
+        
+        self.dropdown = tk.Toplevel(self)
+        self.dropdown.wm_overrideredirect(True)
+        self.dropdown.configure(bg="#151515")
+        
+        x = self.winfo_rootx()
+        y = self.winfo_rooty() + self.winfo_height()
+        self.dropdown.geometry(f"{self.winfo_width()}x{min(len(self.values) * 36 + 8, 200)}+{x}+{y}")
+        
+        canvas = tk.Canvas(self.dropdown, bg="#151515", highlightthickness=0)
+        scrollbar = tk.Scrollbar(self.dropdown, orient="vertical", command=canvas.yview, width=6)
+        scrollbar.configure(bg="#2a2a2a", troughcolor="#151515", activebackground="#4a4a4a", bd=0)
+        scrollable = tk.Frame(canvas, bg="#151515")
+        
+        scrollable.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=scrollable, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        canvas.pack(side="left", fill="both", expand=True, padx=4, pady=4)
+        scrollbar.pack(side="right", fill="y")
+        
+        for value in self.values:
+            item = tk.Frame(scrollable, bg="#151515", height=36)
+            item.pack(fill="x")
+            item.pack_propagate(False)
+            
+            label = tk.Label(item, text=value, font=("Segoe UI", 11),
+                            bg="#151515", fg="#ffffff", anchor="w")
+            label.pack(fill="both", padx=14, pady=6)
+            
+            def on_enter(e, f=item, l=label):
+                f.configure(bg="#2a2a2a")
+                l.configure(bg="#2a2a2a")
+            
+            def on_leave(e, f=item, l=label):
+                f.configure(bg="#151515")
+                l.configure(bg="#151515")
+            
+            def on_click(e, v=value):
+                self.var.set(v)
+                self._close_dropdown()
+            
+            item.bind("<Enter>", on_enter)
+            item.bind("<Leave>", on_leave)
+            item.bind("<Button-1>", on_click)
+            label.bind("<Enter>", on_enter)
+            label.bind("<Leave>", on_leave)
+            label.bind("<Button-1>", on_click)
+        
+        self.dropdown.bind("<FocusOut>", lambda e: self._close_dropdown())
+        self.dropdown.focus_set()
+    
+    def _close_dropdown(self):
+        self.is_open = False
+        self.arrow.config(text="▼")
+        if self.dropdown:
+            self.dropdown.destroy()
+            self.dropdown = None
+        
+        self.button_frame.canvas.configure(bg="#151515")
+        self.button_inner.configure(bg="#151515")
+        self.label.configure(bg="#151515")
+        self.arrow.configure(bg="#151515")
+    
+    def get(self):
+        return self.var.get()
+    
+    def set(self, value):
+        self.var.set(value)
+    
+    def update_values(self, values):
+        self.values = values
 
 
 class JustLauncherApp:
@@ -113,8 +314,8 @@ class JustLauncherApp:
         self._current_account_index = 0
         self._installed_mods = []
         self._load_installed_mods()
-        self._minecraft_news = []
-        self._load_minecraft_news()
+        self._version_news = []
+        self._load_version_news()
 
         self._build_ui()
         self._load_versions_async()
@@ -123,12 +324,10 @@ class JustLauncherApp:
         default = {
             "last_username": "Player", 
             "last_version": "", 
-            "username_history": ["Player"],
             "accounts": [{"username": "Player"}],
             "ram_allocation": 2048,
             "java_args": "",
             "close_launcher": True,
-            "keep_launcher_open": False,
         }
         if not self.config_path.exists():
             return default
@@ -160,38 +359,36 @@ class JustLauncherApp:
                         "file": file,
                         "enabled": not file.endswith(".disabled")
                     })
-        if not self._installed_mods:
-            self._installed_mods = []
 
-    def _load_minecraft_news(self):
-        self._minecraft_news = [
+    def _load_version_news(self):
+        self._version_news = [
             {
-                "title": "Вышла Minecraft 1.21",
-                "description": "Новое обновление добавляет Trial Chambers, нового моба Breeze и множество других возможностей.",
+                "version": "1.21",
+                "title": "Minecraft 1.21 - Tricky Trials",
+                "description": "Новое обновление добавляет Trial Chambers, моба Breeze, медные лампы и многое другое. Исследуйте процедурно-генерируемые структуры и сражайтесь с новыми врагами.",
                 "date": "13 июня 2024",
-                "url": "https://www.minecraft.net/ru-ru/article/minecraft-java-edition-1-21",
-                "image": "🆕"
+                "type": "release"
             },
             {
-                "title": "Снапшот 24w21b",
-                "description": "Исправлены баги с новыми структурами, улучшена производительность vault блоков.",
-                "date": "22 мая 2024",
-                "url": "https://www.minecraft.net/ru-ru/article/minecraft-snapshot-24w21b",
-                "image": "📸"
+                "version": "1.20.5",
+                "title": "Minecraft 1.20.5 - Armored Paws",
+                "description": "Обновление добавляет броненосцев, волчью броню и новые варианты волков. Теперь вы можете защитить своих питомцев и исследовать новые биомы.",
+                "date": "23 апреля 2024",
+                "type": "release"
             },
             {
-                "title": "Minecraft Live 2024",
-                "description": "Анонсирована дата проведения Minecraft Live - 28 сентября. Обещают показать новое обновление.",
-                "date": "15 мая 2024",
-                "url": "https://www.minecraft.net/ru-ru/live",
-                "image": "🎥"
+                "version": "1.20.4",
+                "title": "Minecraft 1.20.4",
+                "description": "Техническое обновление с исправлением багов и улучшением производительности. Рекомендуется для всех игроков.",
+                "date": "7 декабря 2023",
+                "type": "release"
             },
             {
-                "title": "Обновление Bedrock 1.21.2",
-                "description": "Исправлены критические ошибки, добавлены новые достижения для Realm.",
-                "date": "10 мая 2024",
-                "url": "https://www.minecraft.net/ru-ru/article/bedrock-1-21-2",
-                "image": "🛏️"
+                "version": "1.20.2",
+                "title": "Minecraft 1.20.2",
+                "description": "Обновление добавляет экспериментальный Villager Trade Rebalance, новые настройки мира и исправления ошибок.",
+                "date": "21 сентября 2023",
+                "type": "release"
             },
         ]
 
@@ -211,8 +408,6 @@ class JustLauncherApp:
         
         self.content_frame = tk.Frame(content, bg="#0a0a0a")
         self.content_frame.pack(side="right", fill="both", expand=True, padx=(16, 0))
-        
-        self._build_footer()
         
         self._show_home_page()
 
@@ -313,8 +508,8 @@ class JustLauncherApp:
         buttons = tk.Frame(inner, bg="#151515")
         buttons.pack(fill="x")
         
-        cancel_btn = tk.Label(buttons, text="Отмена", font=("Segoe UI", 10),
-                bg="#151515", fg="#888888", cursor="hand2")
+        cancel_btn = HoverLabel(buttons, text="Отмена", font=("Segoe UI", 10),
+                               bg="#151515", fg="#888888", hover_color="#ffffff")
         cancel_btn.pack(side="right", padx=(12, 0))
         cancel_btn.bind("<Button-1>", lambda e: dialog.destroy())
         
@@ -366,8 +561,8 @@ class JustLauncherApp:
                     bg="#0a0a0a", fg="#ffffff").pack(side="left")
             
             if i != self._current_account_index and len(self._accounts) > 1:
-                del_btn = tk.Label(item_inner, text="🗑️", font=("Segoe UI", 12),
-                                  bg="#0a0a0a", fg="#ff6b6b", cursor="hand2")
+                del_btn = HoverLabel(item_inner, text="🗑️", font=("Segoe UI", 12),
+                                    bg="#0a0a0a", fg="#ff6b6b", hover_color="#ff4444")
                 del_btn.pack(side="right")
                 del_btn.bind("<Button-1>", lambda e, idx=i: self._delete_account(idx, dialog))
         
@@ -376,8 +571,8 @@ class JustLauncherApp:
                                 width=170, height=38, radius=10, font_size=10)
         add_btn.pack()
         
-        close_btn = tk.Label(inner, text="Закрыть", font=("Segoe UI", 10),
-                bg="#151515", fg="#888888", cursor="hand2")
+        close_btn = HoverLabel(inner, text="Закрыть", font=("Segoe UI", 10),
+                              bg="#151515", fg="#888888", hover_color="#ffffff")
         close_btn.pack(pady=(12, 0))
         close_btn.bind("<Button-1>", lambda e: dialog.destroy())
         
@@ -408,61 +603,56 @@ class JustLauncherApp:
         dialog.geometry(f"+{x}+{y}")
 
     def _build_sidebar(self, parent: tk.Frame) -> None:
-        sidebar = tk.Frame(parent, bg="#0a0a0a", width=150)
+        sidebar = tk.Frame(parent, bg="#0a0a0a", width=170)
         sidebar.pack(side="left", fill="y")
         sidebar.pack_propagate(False)
         
         nav_items = [
             ("🏠 Главная", "home"),
-            ("📰 Новости", "news"),
+            ("📰 Новости версий", "news"),
             ("📦 Сборки", "modpacks"),
             ("🔧 Моды", "mods"),
         ]
         
         self.nav_buttons = {}
         for label, key in nav_items:
-            btn_frame = tk.Frame(sidebar, bg="#0a0a0a", height=42)
+            btn_frame = tk.Frame(sidebar, bg="#0a0a0a", height=44)
             btn_frame.pack(fill="x", pady=2)
             btn_frame.pack_propagate(False)
             
-            btn = tk.Label(btn_frame, text=label, font=("Segoe UI", 12),
-                          bg="#0a0a0a", fg="#888888", anchor="w", cursor="hand2")
-            btn.pack(fill="both", padx=8)
+            btn = HoverLabel(btn_frame, text=label, font=("Segoe UI", 12),
+                            bg="#0a0a0a", fg="#888888", hover_color="#ffffff", anchor="w")
+            btn.pack(fill="both", padx=10)
             
             if self._current_page == key:
                 btn.config(fg="#ffffff", font=("Segoe UI", 12, "bold"))
                 indicator = tk.Frame(btn_frame, bg="#4a9eff", width=3)
-                indicator.place(x=0, y=6, height=30)
+                indicator.place(x=0, y=6, height=32)
             
-            btn.bind("<Enter>", lambda e, b=btn, k=key: self._nav_hover(b, k, True))
-            btn.bind("<Leave>", lambda e, b=btn, k=key: self._nav_hover(b, k, False))
             btn.bind("<Button-1>", lambda e, k=key: self._nav_click(k))
             
             self.nav_buttons[key] = (btn_frame, btn)
-
-    def _build_footer(self) -> None:
-        footer = tk.Frame(self.main_container, bg="#0a0a0a", height=36)
-        footer.pack(fill="x", side="bottom")
-        footer.pack_propagate(False)
         
-        items = [
-            ("⚙️ Настройки", self._show_settings),
-            ("📁 Папка игры", lambda: os.startfile(self.minecraft_dir)),
-        ]
+        sidebar_bottom = tk.Frame(sidebar, bg="#0a0a0a")
+        sidebar_bottom.pack(side="bottom", fill="x", pady=10)
         
-        for text, cmd in items:
-            lbl = tk.Label(footer, text=text, font=("Segoe UI", 10),
-                          bg="#0a0a0a", fg="#666666", cursor="hand2")
-            lbl.pack(side="left", padx=(0, 28))
-            
-            lbl.bind("<Enter>", lambda e, l=lbl: l.config(fg="#999999"))
-            lbl.bind("<Leave>", lambda e, l=lbl: l.config(fg="#666666"))
-            lbl.bind("<Button-1>", lambda e, c=cmd: c())
-
-    def _nav_hover(self, btn: tk.Label, key: str, hover: bool) -> None:
-        if self._current_page == key:
-            return
-        btn.config(fg="#cccccc" if hover else "#888888")
+        accounts_btn = HoverLabel(sidebar_bottom, text="👤 Аккаунты", font=("Segoe UI", 11),
+                                  bg="#0a0a0a", fg="#888888", hover_color="#ffffff", anchor="w",
+                                  cursor="hand2")
+        accounts_btn.pack(fill="x", padx=10, pady=4)
+        accounts_btn.bind("<Button-1>", lambda e: self._manage_accounts())
+        
+        settings_btn = HoverLabel(sidebar_bottom, text="⚙️ Настройки", font=("Segoe UI", 11),
+                                  bg="#0a0a0a", fg="#888888", hover_color="#ffffff", anchor="w",
+                                  cursor="hand2")
+        settings_btn.pack(fill="x", padx=10, pady=4)
+        settings_btn.bind("<Button-1>", lambda e: self._show_settings())
+        
+        folder_btn = HoverLabel(sidebar_bottom, text="📁 Папка игры", font=("Segoe UI", 11),
+                                bg="#0a0a0a", fg="#888888", hover_color="#ffffff", anchor="w",
+                                cursor="hand2")
+        folder_btn.pack(fill="x", padx=10, pady=4)
+        folder_btn.bind("<Button-1>", lambda e: os.startfile(self.minecraft_dir))
 
     def _nav_click(self, key: str) -> None:
         self._current_page = key
@@ -475,7 +665,7 @@ class JustLauncherApp:
             if k == key:
                 btn.config(fg="#ffffff", font=("Segoe UI", 12, "bold"))
                 indicator = tk.Frame(frame, bg="#4a9eff", width=3)
-                indicator.place(x=0, y=6, height=30)
+                indicator.place(x=0, y=6, height=32)
             else:
                 btn.config(fg="#888888", font=("Segoe UI", 12))
         
@@ -511,35 +701,39 @@ class JustLauncherApp:
         tk.Label(welcome_content, text="Готовы к новым приключениям в Minecraft?",
                 font=("Segoe UI", 11), bg="#151515", fg="#888888").pack(anchor="w", pady=(4, 0))
         
-        version_card = RoundedFrame(self.content_frame, bg="#151515", radius=18)
-        version_card.pack(fill="x", pady=(0, 20))
+        selectors_row = tk.Frame(self.content_frame, bg="#0a0a0a")
+        selectors_row.pack(fill="x", pady=(0, 20))
         
-        version_inner = version_card.inner_frame
-        version_content = tk.Frame(version_inner, bg="#151515")
-        version_content.pack(fill="both", padx=24, pady=20)
+        version_frame = tk.Frame(selectors_row, bg="#0a0a0a")
+        version_frame.pack(side="left", padx=(0, 12))
         
-        tk.Label(version_content, text="Версия Minecraft", font=("Segoe UI", 12, "bold"),
-                bg="#151515", fg="#ffffff").pack(anchor="w", pady=(0, 12))
+        tk.Label(version_frame, text="Версия", font=("Segoe UI", 10, "bold"),
+                bg="#0a0a0a", fg="#888888").pack(anchor="w", pady=(0, 6))
         
-        combo_frame = tk.Frame(version_content, bg="#151515")
-        combo_frame.pack(fill="x")
-        
-        self.version_combo = ttk.Combobox(combo_frame, values=self.versions, state="readonly",
-                                           font=("Segoe UI", 11), width=25)
-        self.version_combo.pack(side="left")
+        self.version_combo = ModernCombobox(version_frame, values=self.versions, default="Загрузка...", width=200)
+        self.version_combo.pack()
         if self.versions:
             last = self.config.get("last_version")
             if last in self.versions:
                 self.version_combo.set(last)
             else:
-                self.version_combo.current(0)
-        else:
-            self.version_combo.set("Загрузка версий...")
+                self.version_combo.set(self.versions[0])
         
-        play_btn = RoundedButton(version_content, text="▶ ИГРАТЬ", bg="#4a9eff", fg="#ffffff",
+        account_frame = tk.Frame(selectors_row, bg="#0a0a0a")
+        account_frame.pack(side="left", padx=(12, 0))
+        
+        tk.Label(account_frame, text="Аккаунт", font=("Segoe UI", 10, "bold"),
+                bg="#0a0a0a", fg="#888888").pack(anchor="w", pady=(0, 6))
+        
+        account_names = [acc["username"] for acc in self._accounts]
+        current_acc = self._accounts[self._current_account_index]["username"]
+        self.account_combo = ModernCombobox(account_frame, values=account_names, default=current_acc, width=200)
+        self.account_combo.pack()
+        
+        play_btn = RoundedButton(self.content_frame, text="▶ ИГРАТЬ", bg="#4a9eff", fg="#ffffff",
                                  hover_bg="#3a8eef", command=self._launch_selected,
-                                 width=160, height=46, radius=14, font_size=12)
-        play_btn.pack(pady=(18, 0))
+                                 width=180, height=50, radius=14, font_size=12)
+        play_btn.pack(pady=(0, 20))
         
         info_row = tk.Frame(self.content_frame, bg="#0a0a0a")
         info_row.pack(fill="both", expand=True)
@@ -554,9 +748,9 @@ class JustLauncherApp:
         info1_content = tk.Frame(info1_inner, bg="#151515")
         info1_content.pack(fill="both", padx=20, pady=20)
         
-        tk.Label(info1_content, text="📦", font=("Segoe UI", 28),
+        tk.Label(info1_content, text="📦", font=("Segoe UI", 32),
                 bg="#151515", fg="#4a9eff").pack(anchor="w")
-        tk.Label(info1_content, text="Сборки модов", font=("Segoe UI", 13, "bold"),
+        tk.Label(info1_content, text="Сборки модов", font=("Segoe UI", 14, "bold"),
                 bg="#151515", fg="#ffffff").pack(anchor="w", pady=(8, 4))
         tk.Label(info1_content, text="Готовые сборки для любого стиля игры",
                 font=("Segoe UI", 9), bg="#151515", fg="#888888").pack(anchor="w")
@@ -572,9 +766,9 @@ class JustLauncherApp:
         info2_content.pack(fill="both", padx=20, pady=20)
         
         mods_count = len(self._installed_mods)
-        tk.Label(info2_content, text="🔧", font=("Segoe UI", 28),
+        tk.Label(info2_content, text="🔧", font=("Segoe UI", 32),
                 bg="#151515", fg="#50c878").pack(anchor="w")
-        tk.Label(info2_content, text=f"Установлено модов: {mods_count}", font=("Segoe UI", 13, "bold"),
+        tk.Label(info2_content, text=f"Установлено модов: {mods_count}", font=("Segoe UI", 14, "bold"),
                 bg="#151515", fg="#ffffff").pack(anchor="w", pady=(8, 4))
         tk.Label(info2_content, text="Управляйте модами во вкладке Моды",
                 font=("Segoe UI", 9), bg="#151515", fg="#888888").pack(anchor="w")
@@ -585,25 +779,17 @@ class JustLauncherApp:
         header = tk.Frame(self.content_frame, bg="#0a0a0a")
         header.pack(fill="x", pady=(0, 18))
         
-        tk.Label(header, text="Новости Minecraft", font=("Segoe UI", 22, "bold"),
+        tk.Label(header, text="Новости версий", font=("Segoe UI", 22, "bold"),
                 bg="#0a0a0a", fg="#ffffff").pack(side="left")
         
-        tk.Label(header, text="Официальные новости от Mojang", font=("Segoe UI", 10),
+        tk.Label(header, text="История обновлений Minecraft", font=("Segoe UI", 10),
                 bg="#0a0a0a", fg="#888888").pack(side="left", padx=(12, 0))
         
-        canvas = tk.Canvas(self.content_frame, bg="#0a0a0a", highlightthickness=0)
-        scrollbar = ttk.Scrollbar(self.content_frame, orient="vertical", command=canvas.yview)
-        scrollable = tk.Frame(canvas, bg="#0a0a0a")
+        scroll_frame = ScrollableFrame(self.content_frame, bg="#0a0a0a")
+        scroll_frame.pack(fill="both", expand=True)
         
-        scrollable.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.create_window((0, 0), window=scrollable, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
-        
-        canvas.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
-        
-        for news in self._minecraft_news:
-            card = RoundedFrame(scrollable, bg="#151515", radius=18)
+        for news in self._version_news:
+            card = RoundedFrame(scroll_frame.scrollable_frame, bg="#151515", radius=18)
             card.pack(fill="x", pady=6)
             
             inner = card.inner_frame
@@ -613,7 +799,8 @@ class JustLauncherApp:
             header_frame = tk.Frame(content, bg="#151515")
             header_frame.pack(fill="x")
             
-            tk.Label(header_frame, text=news["image"], font=("Segoe UI", 24),
+            type_emoji = "🆕" if news["type"] == "release" else "📸"
+            tk.Label(header_frame, text=type_emoji, font=("Segoe UI", 24),
                     bg="#151515").pack(side="left", padx=(0, 12))
             
             text_frame = tk.Frame(header_frame, bg="#151515")
@@ -621,16 +808,11 @@ class JustLauncherApp:
             
             tk.Label(text_frame, text=news["title"], font=("Segoe UI", 14, "bold"),
                     bg="#151515", fg="#ffffff").pack(anchor="w")
-            tk.Label(text_frame, text=news["date"], font=("Segoe UI", 9),
+            tk.Label(text_frame, text=f"Версия {news['version']} • {news['date']}", font=("Segoe UI", 9),
                     bg="#151515", fg="#4a9eff").pack(anchor="w", pady=(2, 0))
             
             tk.Label(content, text=news["description"], font=("Segoe UI", 10),
-                    bg="#151515", fg="#aaaaaa", wraplength=600, justify="left").pack(anchor="w", pady=(12, 0))
-            
-            link_btn = tk.Label(content, text="Читать подробнее →", font=("Segoe UI", 9),
-                               bg="#151515", fg="#4a9eff", cursor="hand2")
-            link_btn.pack(anchor="w", pady=(8, 0))
-            link_btn.bind("<Button-1>", lambda e, url=news["url"]: webbrowser.open(url))
+                    bg="#151515", fg="#aaaaaa", wraplength=550, justify="left").pack(anchor="w", pady=(12, 0))
 
     def _show_modpacks_page(self) -> None:
         self._clear_content()
@@ -652,7 +834,10 @@ class JustLauncherApp:
              "desc": "Хардкорное выживание с драконами и реалистичной механикой", "mods": 120},
         ]
         
-        grid = tk.Frame(self.content_frame, bg="#0a0a0a")
+        scroll_frame = ScrollableFrame(self.content_frame, bg="#0a0a0a")
+        scroll_frame.pack(fill="both", expand=True)
+        
+        grid = tk.Frame(scroll_frame.scrollable_frame, bg="#0a0a0a")
         grid.pack(fill="both", expand=True)
         
         for i, pack in enumerate(modpacks):
@@ -685,9 +870,9 @@ class JustLauncherApp:
         tk.Label(header, text="Моды", font=("Segoe UI", 22, "bold"),
                 bg="#0a0a0a", fg="#ffffff").pack(side="left")
         
-        open_mods_btn = RoundedButton(header, text="📂 Открыть папку модов", bg="#2a2a2a", fg="#ffffff",
+        open_mods_btn = RoundedButton(header, text="📂 Открыть папку", bg="#2a2a2a", fg="#ffffff",
                                       hover_bg="#3a3a3a", command=lambda: self._open_mods_folder(),
-                                      width=160, height=36, radius=10)
+                                      width=140, height=36, radius=10, font_size=10)
         open_mods_btn.pack(side="right")
         
         featured = RoundedFrame(self.content_frame, bg="#151515", radius=18)
@@ -703,27 +888,32 @@ class JustLauncherApp:
                 font=("Segoe UI", 9), bg="#151515", fg="#888888").pack(anchor="w", pady=(2, 0))
         
         if self._installed_mods:
-            cols = tk.Frame(self.content_frame, bg="#0a0a0a")
+            scroll_frame = ScrollableFrame(self.content_frame, bg="#0a0a0a")
+            scroll_frame.pack(fill="both", expand=True)
+            
+            cols = tk.Frame(scroll_frame.scrollable_frame, bg="#0a0a0a")
             cols.pack(fill="x", pady=(0, 8))
             
             tk.Label(cols, text="Название", font=("Segoe UI", 10, "bold"),
-                    bg="#0a0a0a", fg="#666666", width=30, anchor="w").pack(side="left")
+                    bg="#0a0a0a", fg="#666666", width=35, anchor="w").pack(side="left")
             tk.Label(cols, text="Статус", font=("Segoe UI", 10, "bold"),
-                    bg="#0a0a0a", fg="#666666", width=12, anchor="w").pack(side="left")
+                    bg="#0a0a0a", fg="#666666", width=15, anchor="w").pack(side="left")
             
-            tk.Frame(self.content_frame, bg="#2a2a2a", height=1).pack(fill="x", pady=5)
+            tk.Frame(scroll_frame.scrollable_frame, bg="#2a2a2a", height=1).pack(fill="x", pady=5)
             
             for mod in self._installed_mods:
-                row = tk.Frame(self.content_frame, bg="#0a0a0a")
+                row = tk.Frame(scroll_frame.scrollable_frame, bg="#0a0a0a")
                 row.pack(fill="x", pady=3)
                 
-                tk.Label(row, text=mod["name"], font=("Segoe UI", 10),
-                        bg="#0a0a0a", fg="#ffffff", width=30, anchor="w").pack(side="left")
+                name_label = HoverLabel(row, text=mod["name"], font=("Segoe UI", 10),
+                                       bg="#0a0a0a", fg="#ffffff", hover_color="#4a9eff",
+                                       width=35, anchor="w")
+                name_label.pack(side="left")
                 
                 status_color = "#50c878" if mod["enabled"] else "#ff6b6b"
                 status_text = "✓ Включен" if mod["enabled"] else "✗ Отключен"
                 tk.Label(row, text=status_text, font=("Segoe UI", 9),
-                        bg="#0a0a0a", fg=status_color, width=12, anchor="w").pack(side="left")
+                        bg="#0a0a0a", fg=status_color, width=15, anchor="w").pack(side="left")
         else:
             empty_card = RoundedFrame(self.content_frame, bg="#151515", radius=18)
             empty_card.pack(fill="both", expand=True)
@@ -753,13 +943,13 @@ class JustLauncherApp:
     def _show_settings(self) -> None:
         dialog = tk.Toplevel(self.root)
         dialog.title("Настройки")
-        dialog.geometry("480x420")
+        dialog.geometry("500x450")
         dialog.resizable(False, False)
         dialog.transient(self.root)
         dialog.grab_set()
         dialog.configure(bg="#151515")
         
-        self._center_dialog(dialog, 480, 420)
+        self._center_dialog(dialog, 500, 450)
         
         inner = tk.Frame(dialog, bg="#151515")
         inner.pack(fill="both", padx=30, pady=30)
@@ -776,7 +966,6 @@ class JustLauncherApp:
             ]),
             ("Поведение", [
                 ("Закрывать лаунчер при запуске", "close_launcher", "check", None),
-                ("Оставлять лаунчер открытым", "keep_launcher_open", "check", None),
             ]),
         ]
         
@@ -794,7 +983,7 @@ class JustLauncherApp:
                 row.pack(fill="x", pady=4)
                 
                 tk.Label(row, text=label, font=("Segoe UI", 10),
-                        bg="#151515", fg="#aaaaaa", width=28, anchor="w").pack(side="left")
+                        bg="#151515", fg="#aaaaaa", width=30, anchor="w").pack(side="left")
                 
                 if wtype == "spinbox":
                     var = tk.IntVar(value=self.config.get(key, 2048))
@@ -830,16 +1019,16 @@ class JustLauncherApp:
         tk.Label(folder_row, text=self.minecraft_dir, font=("Segoe UI", 9),
                 bg="#151515", fg="#888888").pack(side="left")
         
-        open_btn = tk.Label(folder_row, text="📂 Открыть", font=("Segoe UI", 9),
-                           bg="#151515", fg="#4a9eff", cursor="hand2")
+        open_btn = HoverLabel(folder_row, text="📂 Открыть", font=("Segoe UI", 9),
+                             bg="#151515", fg="#4a9eff", hover_color="#ffffff")
         open_btn.pack(side="right")
         open_btn.bind("<Button-1>", lambda e: os.startfile(self.minecraft_dir))
         
         buttons = tk.Frame(inner, bg="#151515")
         buttons.pack(fill="x", pady=(8, 0))
         
-        cancel_btn = tk.Label(buttons, text="Отмена", font=("Segoe UI", 10),
-                bg="#151515", fg="#888888", cursor="hand2")
+        cancel_btn = HoverLabel(buttons, text="Отмена", font=("Segoe UI", 10),
+                               bg="#151515", fg="#888888", hover_color="#ffffff")
         cancel_btn.pack(side="right", padx=(12, 0))
         cancel_btn.bind("<Button-1>", lambda e: dialog.destroy())
         
@@ -873,33 +1062,43 @@ class JustLauncherApp:
     def _load_versions(self) -> None:
         try:
             manifest = minecraft_launcher_lib.utils.get_version_list()
-            versions = [v["id"] for v in manifest if v.get("type") == "release"][:25]
+            versions = [v["id"] for v in manifest if v.get("type") == "release"][:20]
             self.versions = versions
             self.root.after(0, self._update_version_combo)
         except:
-            self.versions = ["1.20.6", "1.20.5", "1.20.4", "1.20.2", "1.20.1", "1.19.4", "1.19.2", "1.18.2"]
+            self.versions = ["1.21", "1.20.6", "1.20.5", "1.20.4", "1.20.2", "1.20.1", "1.19.4", "1.19.2", "1.18.2"]
             self.root.after(0, self._update_version_combo)
 
     def _update_version_combo(self) -> None:
         if hasattr(self, 'version_combo'):
-            self.version_combo["values"] = self.versions
+            self.version_combo.update_values(self.versions)
             last = self.config.get("last_version")
             if last in self.versions:
                 self.version_combo.set(last)
             elif self.versions:
-                self.version_combo.current(0)
+                self.version_combo.set(self.versions[0])
 
     def _launch_selected(self) -> None:
-        if hasattr(self, 'version_combo'):
+        if hasattr(self, 'version_combo') and hasattr(self, 'account_combo'):
             version = self.version_combo.get()
-            if version and version != "Загрузка версий...":
-                self._launch_game(self._accounts[self._current_account_index]["username"], version)
+            account_name = self.account_combo.get()
+            
+            for i, acc in enumerate(self._accounts):
+                if acc["username"] == account_name:
+                    self._current_account_index = i
+                    self.config["last_username"] = account_name
+                    self.profile_btn.config(text=f"{account_name} ▼")
+                    self._update_profile_menu()
+                    break
+            
+            if version and version != "Загрузка...":
+                self._launch_game(account_name, version)
 
     def _launch_game(self, username: str, version: str) -> None:
         self.config["last_version"] = version
         self._save_config()
         
-        if self.config.get("close_launcher", True) and not self.config.get("keep_launcher_open", False):
+        if self.config.get("close_launcher", True):
             self.root.iconify()
         
         def install_and_launch():
