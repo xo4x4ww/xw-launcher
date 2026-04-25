@@ -73,10 +73,10 @@ class MinecraftLauncherApp:
             with self.config_path.open("w", encoding="utf-8") as config_file:
                 json.dump(self.config, config_file, ensure_ascii=False, indent=2)
         except OSError:
-            self.status_var.set("Не удалось сохранить настройки")
+            if hasattr(self, 'status_var'):
+                self.status_var.set("Не удалось сохранить настройки")
 
     def _apply_window_icon(self) -> None:
-        # Создаем собственную иконку - кубик травы Minecraft
         icon_bitmap = """
 #define launcher_width 16
 #define launcher_height 16
@@ -147,7 +147,6 @@ static unsigned char launcher_bits[] = {
         
         self.root.configure(bg=c["bg_primary"])
         
-        # Настройка стилей ttk
         style.configure("TFrame", background=c["bg_primary"])
         style.configure("Card.TFrame", background=c["bg_card"], relief="flat")
         style.configure("Sidebar.TFrame", background=c["sidebar_bg"])
@@ -201,13 +200,15 @@ static unsigned char launcher_bits[] = {
 
     def _create_icon(self, canvas: tk.Canvas, icon_type: str, x: int, y: int, size: int, color: str) -> None:
         """Рисует векторные иконки на canvas"""
-        canvas.delete("all")
+        try:
+            canvas.delete("all")
+        except tk.TclError:
+            return  # Canvas уже уничтожен
         
         if icon_type == "home":
-            # Домик
             points = [
-                x + size//2, y + 2,  # вершина крыши
-                x + size - 2, y + size//2,  # правый угол
+                x + size//2, y + 2,
+                x + size - 2, y + size//2,
                 x + size - 4, y + size//2,
                 x + size - 4, y + size - 2,
                 x + 4, y + size - 2,
@@ -215,36 +216,27 @@ static unsigned char launcher_bits[] = {
                 x + 2, y + size//2,
             ]
             canvas.create_polygon(points, fill=color, outline="", smooth=True)
-            # Дверь
             canvas.create_rectangle(x + size//3, y + size*2//3, x + size*2//3, y + size - 2, 
                                    fill=self._theme_colors["bg_primary"], outline="", width=0)
             
         elif icon_type == "mods":
-            # Пазл (моды)
             piece_size = size // 3
-            # Верхний левый
             canvas.create_rectangle(x + 2, y + 2, x + piece_size, y + piece_size, fill=color, outline="", width=0)
-            # Верхний правый
             canvas.create_rectangle(x + piece_size*2, y + 2, x + size - 2, y + piece_size, fill=color, outline="", width=0)
-            # Нижний левый
             canvas.create_rectangle(x + 2, y + piece_size*2, x + piece_size, y + size - 2, fill=color, outline="", width=0)
-            # Нижний правый
             canvas.create_rectangle(x + piece_size*2, y + piece_size*2, x + size - 2, y + size - 2, fill=color, outline="", width=0)
-            # Выступы
             canvas.create_rectangle(x + piece_size, y + 2, x + piece_size*2, y + 4, fill=color, outline="", width=0)
             canvas.create_rectangle(x + piece_size, y + size - 4, x + piece_size*2, y + size - 2, fill=color, outline="", width=0)
             canvas.create_rectangle(x + 2, y + piece_size, x + 4, y + piece_size*2, fill=color, outline="", width=0)
             canvas.create_rectangle(x + size - 4, y + piece_size, x + size - 2, y + piece_size*2, fill=color, outline="", width=0)
             
         elif icon_type == "settings":
-            # Шестеренка
             center_x, center_y = x + size//2, y + size//2
-            outer_r = size//2 - 2
             inner_r = size//4
+            outer_r = size//2 - 2
             canvas.create_oval(center_x - inner_r, center_y - inner_r, 
                               center_x + inner_r, center_y + inner_r, 
                               fill="", outline=color, width=2)
-            # Зубцы
             import math
             for i in range(8):
                 angle = i * math.pi / 4
@@ -255,29 +247,22 @@ static unsigned char launcher_bits[] = {
                 canvas.create_line(x1, y1, x2, y2, fill=color, width=3, capstyle="round")
                 
         elif icon_type == "screenshots":
-            # Фотоаппарат
-            # Корпус
             canvas.create_rectangle(x + 2, y + size//3, x + size - 2, y + size - 2, 
                                    fill=color, outline="", width=0)
-            # Объектив
             canvas.create_oval(x + size//3, y + size//2, x + size*2//3, y + size*2//3, 
                               fill=self._theme_colors["bg_primary"], outline=color, width=2)
             canvas.create_oval(x + size*2//5, y + size*3//5, x + size*3//5, y + size*7//10, 
                               fill=color, outline="", width=0)
-            # Вспышка
             canvas.create_rectangle(x + size*2//3, y + 2, x + size - 4, y + size//3, 
                                    fill=color, outline="", width=0)
             
         elif icon_type == "help":
-            # Вопросительный знак в круге
             canvas.create_oval(x + 2, y + 2, x + size - 2, y + size - 2, 
                               fill="", outline=color, width=2)
-            # ?
             canvas.create_text(x + size//2, y + size//2, text="?", 
                               fill=color, font=("Segoe UI", size//2, "bold"))
             
         elif icon_type == "play":
-            # Треугольник (плей)
             points = [
                 x + 4, y + 2,
                 x + size - 2, y + size//2,
@@ -286,20 +271,24 @@ static unsigned char launcher_bits[] = {
             canvas.create_polygon(points, fill=color, outline="", smooth=True)
             
         elif icon_type == "refresh":
-            # Круговая стрелка
             import math
             center_x, center_y = x + size//2, y + size//2
             r = size//2 - 2
-            # Дуга
             canvas.create_arc(x + 2, y + 2, x + size - 2, y + size - 2, 
                              start=30, extent=300, style="arc", outline=color, width=2)
-            # Стрелка
             arrow_x = center_x + r * 0.7
             arrow_y = center_y - r * 0.7
             canvas.create_line(arrow_x, arrow_y, arrow_x + 4, arrow_y - 4, fill=color, width=2)
             canvas.create_line(arrow_x, arrow_y, arrow_x - 2, arrow_y - 5, fill=color, width=2)
 
     def _build_ui(self) -> None:
+        # Очищаем старые виджеты
+        for widget in self.root.winfo_children():
+            widget.destroy()
+            
+        # Сбрасываем список навигации
+        self._nav_items.clear()
+        
         # Главный контейнер
         main_container = tk.Frame(self.root, bg=self._theme_colors["bg_primary"])
         main_container.pack(fill="both", expand=True, padx=1, pady=1)
@@ -340,12 +329,10 @@ static unsigned char launcher_bits[] = {
             color = self._theme_colors["accent"] if i == self._active_nav_index else self._theme_colors["text_muted"]
             self._create_icon(canvas, icon_type, 0, 0, 32, color)
             
-            # Сохраняем данные для обновления
             nav_frame.canvas = canvas
             nav_frame.icon_type = icon_type
             nav_frame.index = i
             
-            # Привязываем события
             nav_frame.bind("<Button-1>", lambda e, idx=i: self._on_nav_click(idx))
             nav_frame.bind("<Enter>", lambda e, f=nav_frame: self._on_nav_hover(f, True))
             nav_frame.bind("<Leave>", lambda e, f=nav_frame: self._on_nav_hover(f, False))
@@ -364,14 +351,12 @@ static unsigned char launcher_bits[] = {
         topbar.pack(fill="x", padx=20, pady=(15, 5))
         topbar.pack_propagate(False)
         
-        # Заголовок страницы
         self.page_title = tk.Label(topbar, text="Главная", 
                                   font=("Segoe UI", 20, "bold"),
                                   bg=self._theme_colors["bg_primary"],
                                   fg=self._theme_colors["text_primary"])
         self.page_title.pack(side="left")
         
-        # Кнопка темы
         theme_frame = tk.Frame(topbar, bg=self._theme_colors["bg_primary"])
         theme_frame.pack(side="right")
         
@@ -388,9 +373,10 @@ static unsigned char launcher_bits[] = {
         
         # Создаем страницы
         self._build_pages()
-        self._show_page(0)
+        self._show_page(self._active_nav_index)
 
     def _build_pages(self) -> None:
+        self._page_frames.clear()
         self._page_frames[0] = self._build_home_page()
         self._page_frames[1] = self._build_mods_page()
         self._page_frames[2] = self._build_settings_page()
@@ -400,7 +386,6 @@ static unsigned char launcher_bits[] = {
     def _build_home_page(self) -> tk.Frame:
         page = tk.Frame(self.page_container, bg=self._theme_colors["bg_primary"])
         
-        # Заголовок с приветствием
         welcome_frame = tk.Frame(page, bg=self._theme_colors["bg_card"])
         welcome_frame.pack(fill="x", pady=(0, 15))
         
@@ -417,15 +402,12 @@ static unsigned char launcher_bits[] = {
                 bg=self._theme_colors["bg_card"],
                 fg=self._theme_colors["text_secondary"]).pack(anchor="w", pady=(5, 0))
         
-        # Основной контент - две колонки
         content = tk.Frame(page, bg=self._theme_colors["bg_primary"])
         content.pack(fill="both", expand=True)
         
-        # Левая колонка
         left_col = tk.Frame(content, bg=self._theme_colors["bg_primary"])
         left_col.pack(side="left", fill="both", expand=True, padx=(0, 10))
         
-        # Форма настроек
         form_card = tk.Frame(left_col, bg=self._theme_colors["bg_card"])
         form_card.pack(fill="both", expand=True)
         
@@ -437,7 +419,6 @@ static unsigned char launcher_bits[] = {
                 bg=self._theme_colors["bg_card"],
                 fg=self._theme_colors["text_primary"]).pack(anchor="w", pady=(0, 15))
         
-        # Никнейм
         tk.Label(form_inner, text="Никнейм", 
                 font=("Segoe UI", 10),
                 bg=self._theme_colors["bg_card"],
@@ -448,7 +429,6 @@ static unsigned char launcher_bits[] = {
         self.username_combo.set(self.config.get("last_username", "Player"))
         self.username_combo.pack(fill="x", pady=(0, 15))
         
-        # Версия
         tk.Label(form_inner, text="Версия Minecraft", 
                 font=("Segoe UI", 10),
                 bg=self._theme_colors["bg_card"],
@@ -459,11 +439,9 @@ static unsigned char launcher_bits[] = {
         self.version_combo.current(0)
         self.version_combo.pack(fill="x")
         
-        # Кнопки действий
         button_frame = tk.Frame(form_inner, bg=self._theme_colors["bg_card"])
         button_frame.pack(fill="x", pady=(20, 0))
         
-        # Кнопка Play с иконкой
         play_frame = tk.Frame(button_frame, bg=self._theme_colors["accent"], cursor="hand2")
         play_frame.pack(side="left", fill="x", expand=True, padx=(0, 5))
         
@@ -483,7 +461,6 @@ static unsigned char launcher_bits[] = {
         play_canvas.bind("<Button-1>", lambda e: self._on_launch())
         play_label.bind("<Button-1>", lambda e: self._on_launch())
         
-        # Кнопка Refresh с иконкой
         refresh_frame = tk.Frame(button_frame, bg=self._theme_colors["bg_tertiary"], cursor="hand2")
         refresh_frame.pack(side="left", padx=(5, 0))
         
@@ -503,14 +480,13 @@ static unsigned char launcher_bits[] = {
         refresh_canvas.bind("<Button-1>", lambda e: self._load_versions_async())
         refresh_label.bind("<Button-1>", lambda e: self._load_versions_async())
         
-        self.launch_button = play_frame  # Для совместимости с _set_busy
+        self.launch_button = play_frame
+        self.refresh_button = refresh_frame
         
-        # Правая колонка
         right_col = tk.Frame(content, bg=self._theme_colors["bg_primary"], width=350)
         right_col.pack(side="right", fill="y", padx=(10, 0))
         right_col.pack_propagate(False)
         
-        # Карточка прогресса
         progress_card = tk.Frame(right_col, bg=self._theme_colors["bg_card"])
         progress_card.pack(fill="x", pady=(0, 15))
         
@@ -531,7 +507,6 @@ static unsigned char launcher_bits[] = {
                 bg=self._theme_colors["bg_card"],
                 fg=self._theme_colors["accent"]).pack(anchor="w")
         
-        # Карточка статуса
         status_card = tk.Frame(right_col, bg=self._theme_colors["bg_card"])
         status_card.pack(fill="both", expand=True)
         
@@ -551,7 +526,6 @@ static unsigned char launcher_bits[] = {
                 wraplength=280,
                 justify="left").pack(anchor="w")
         
-        # Путь к Minecraft
         tk.Label(status_inner, text=f"Папка игры:\n{self.minecraft_dir}",
                 font=("Segoe UI", 8),
                 bg=self._theme_colors["bg_card"],
@@ -559,7 +533,6 @@ static unsigned char launcher_bits[] = {
                 wraplength=280,
                 justify="left").pack(anchor="w", pady=(20, 0))
         
-        # Кнопка полноэкранного режима
         self.fullscreen_button = tk.Button(status_inner, text="◉ Полный экран (F11)",
                                           font=("Segoe UI", 9),
                                           bg=self._theme_colors["bg_tertiary"],
@@ -574,7 +547,6 @@ static unsigned char launcher_bits[] = {
     def _build_mods_page(self) -> tk.Frame:
         page = tk.Frame(self.page_container, bg=self._theme_colors["bg_primary"])
         
-        # Заголовок
         header = tk.Frame(page, bg=self._theme_colors["bg_card"])
         header.pack(fill="x", pady=(0, 15))
         
@@ -595,7 +567,6 @@ static unsigned char launcher_bits[] = {
                  pady=8,
                  cursor="hand2").pack(side="right")
         
-        # Список модов
         mods_card = tk.Frame(page, bg=self._theme_colors["bg_card"])
         mods_card.pack(fill="both", expand=True)
         
@@ -659,15 +630,11 @@ static unsigned char launcher_bits[] = {
             ("Запоминать последний мир", False),
         ]
         
-        self.setting_vars = []
         for text, default in settings:
             var = tk.BooleanVar(value=default)
-            self.setting_vars.append(var)
-            
             cb = ttk.Checkbutton(inner, text=text, variable=var)
             cb.pack(anchor="w", pady=8)
         
-        # Кнопка сохранения
         tk.Button(inner, text="Сохранить настройки",
                  font=("Segoe UI", 10, "bold"),
                  bg=self._theme_colors["accent"],
@@ -698,7 +665,6 @@ static unsigned char launcher_bits[] = {
                 bg=self._theme_colors["bg_card"],
                 fg=self._theme_colors["text_secondary"]).pack(anchor="w", pady=(0, 20))
         
-        # Сетка превью
         grid = tk.Frame(inner, bg=self._theme_colors["bg_card"])
         grid.pack(fill="both", expand=True)
         
@@ -771,13 +737,13 @@ static unsigned char launcher_bits[] = {
             else:
                 frame.pack_forget()
         
-        # Обновляем активную иконку
         titles = ["Главная", "Моды", "Настройки", "Скриншоты", "Справка"]
         self.page_title.config(text=titles[index])
         
         for i, nav_frame in enumerate(self._nav_items):
             color = self._theme_colors["accent"] if i == index else self._theme_colors["text_muted"]
-            self._create_icon(nav_frame.canvas, nav_frame.icon_type, 0, 0, 32, color)
+            if hasattr(nav_frame, 'canvas') and nav_frame.canvas.winfo_exists():
+                self._create_icon(nav_frame.canvas, nav_frame.icon_type, 0, 0, 32, color)
         
         self._active_nav_index = index
 
@@ -788,7 +754,8 @@ static unsigned char launcher_bits[] = {
         if nav_frame.index == self._active_nav_index:
             return
         color = self._theme_colors["accent"] if hover else self._theme_colors["text_muted"]
-        self._create_icon(nav_frame.canvas, nav_frame.icon_type, 0, 0, 32, color)
+        if hasattr(nav_frame, 'canvas') and nav_frame.canvas.winfo_exists():
+            self._create_icon(nav_frame.canvas, nav_frame.icon_type, 0, 0, 32, color)
 
     def _bind_shortcuts(self) -> None:
         self.root.bind("<F11>", self._toggle_fullscreen_event)
@@ -807,25 +774,31 @@ static unsigned char launcher_bits[] = {
         self._is_fullscreen = not self._is_fullscreen
         self.root.attributes("-fullscreen", self._is_fullscreen)
         button_text = "◉ Оконный режим (F11)" if self._is_fullscreen else "◉ Полный экран (F11)"
-        self.fullscreen_button.config(text=button_text)
+        if hasattr(self, 'fullscreen_button'):
+            self.fullscreen_button.config(text=button_text)
 
     def _on_theme_toggle(self) -> None:
         self._theme_name = "dark" if self.theme_var.get() else "light"
         self.config["theme"] = self._theme_name
         self._save_config()
         self._configure_styles()
-        
-        # Пересоздаем интерфейс
-        for widget in self.root.winfo_children():
-            widget.destroy()
         self._build_ui()
         self._show_page(self._active_nav_index)
 
     def _set_busy(self, busy: bool) -> None:
-        state = "disabled" if busy else "normal"
+        state = "normal" if not busy else "disabled"
         if hasattr(self, 'launch_button'):
             for child in self.launch_button.winfo_children():
-                child.configure(state=state)
+                try:
+                    child.configure(state=state)
+                except tk.TclError:
+                    pass
+        if hasattr(self, 'refresh_button'):
+            for child in self.refresh_button.winfo_children():
+                try:
+                    child.configure(state=state)
+                except tk.TclError:
+                    pass
 
     def _load_versions_async(self) -> None:
         self._set_busy(True)
@@ -855,7 +828,7 @@ static unsigned char launcher_bits[] = {
         last_version = self.config.get("last_version")
         if last_version in ordered_versions:
             self.version_combo.set(last_version)
-        else:
+        elif ordered_versions:
             self.version_combo.current(0)
         self._stop_progress()
         self.status_var.set(f"✓ Загружено {len(versions)} версий")
@@ -1031,14 +1004,17 @@ static unsigned char launcher_bits[] = {
         self.root.after(1000, self._watch_install_progress)
 
     def _animate_progress(self) -> None:
-        if str(self.progress.cget("mode")) == "determinate":
-            if self._progress_display < self._progress_target:
-                delta = max(1.0, (self._progress_target - self._progress_display) * 0.15)
-                self._progress_display = min(self._progress_target, self._progress_display + delta)
-            elif self._progress_display > self._progress_target:
-                self._progress_display = self._progress_target
-
-            self.progress["value"] = self._progress_display
+        if hasattr(self, 'progress'):
+            try:
+                if str(self.progress.cget("mode")) == "determinate":
+                    if self._progress_display < self._progress_target:
+                        delta = max(1.0, (self._progress_target - self._progress_display) * 0.15)
+                        self._progress_display = min(self._progress_target, self._progress_display + delta)
+                    elif self._progress_display > self._progress_target:
+                        self._progress_display = self._progress_target
+                    self.progress["value"] = self._progress_display
+            except tk.TclError:
+                pass
 
         self.root.after(33, self._animate_progress)
 
