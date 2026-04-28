@@ -3,6 +3,8 @@ import os
 import subprocess
 import threading
 import tkinter as tk
+import time
+import webbrowser
 from pathlib import Path
 from tkinter import messagebox, ttk
 from datetime import datetime
@@ -10,47 +12,8 @@ from datetime import datetime
 import minecraft_launcher_lib
 
 
-class RoundedFrame(tk.Frame):
-    """Статическая рамка с закруглёнными углами (без интерактивности)"""
-    def __init__(self, parent, bg="#151515", radius=16, **kwargs):
-        super().__init__(parent, bg=parent["bg"], **kwargs)
-        self.radius = radius
-        self.bg_color = bg
-
-        self.canvas = tk.Canvas(self, bg=parent["bg"], highlightthickness=0)
-        self.canvas.pack(fill="both", expand=True)
-
-        self.inner_frame = tk.Frame(self.canvas, bg=bg)
-        self.inner_frame.pack(fill="both", expand=True, padx=1, pady=1)
-
-        self.canvas.bind("<Configure>", self._on_configure)
-
-    def _on_configure(self, event):
-        self.canvas.delete("all")
-        w, h = event.width, event.height
-        self._create_rounded_rect(0, 0, w, h, self.radius, fill=self.bg_color, outline="")
-
-    @staticmethod
-    def _create_rounded_rect(canvas, x1, y1, x2, y2, radius, **kwargs):
-        points = [
-            x1 + radius, y1,
-            x2 - radius, y1,
-            x2, y1,
-            x2, y1 + radius,
-            x2, y2 - radius,
-            x2, y2,
-            x2 - radius, y2,
-            x1 + radius, y2,
-            x1, y2,
-            x1, y2 - radius,
-            x1, y1 + radius,
-            x1, y1,
-        ]
-        return canvas.create_polygon(points, smooth=True, **kwargs)
-
-
 class HoverButton(tk.Label):
-    """Кнопка с изменением цвета при наведении"""
+    """Простая кнопка с эффектом при наведении"""
     def __init__(self, parent, text, command=None, **kwargs):
         super().__init__(parent, text=text, cursor="hand2", **kwargs)
         self.default_fg = kwargs.get("fg", "#888888")
@@ -79,6 +42,7 @@ class LauncherApp:
         self.root.minsize(900, 520)
         self.root.configure(bg="#0a0a0a")
 
+        # Пути и конфигурация
         self.minecraft_dir = os.path.join(str(Path.home()), ".minecraft")
         self.config_path = Path(__file__).with_name("launcher_config.json")
         self.config = self._load_config()
@@ -129,14 +93,14 @@ class LauncherApp:
                     mods.append({"name": f.replace(".jar", ""), "file": f, "enabled": True})
         return mods
 
-    # ---------- Версии ----------
+    # ---------- Версии Minecraft ----------
     def _load_versions_async(self):
         def worker():
             try:
                 manifest = minecraft_launcher_lib.utils.get_version_list()
                 vers = [v["id"] for v in manifest if v.get("type") == "release"][:20]
             except:
-                vers = ["1.21.11", "1.21", "1.20.6", "1.20.4", "1.20.2", "1.20.1", "1.19.4"]
+                vers = ["1.21", "1.20.6", "1.20.4", "1.20.2", "1.20.1", "1.19.4"]
             self.versions = vers
             self.root.after(0, self._update_version_combobox)
         threading.Thread(target=worker, daemon=True).start()
@@ -152,57 +116,47 @@ class LauncherApp:
 
     # ---------- UI ----------
     def _build_ui(self):
+        # Очистка
         for w in self.root.winfo_children():
             w.destroy()
 
-        # Главный контейнер
+        # Основной контейнер
         main = tk.Frame(self.root, bg="#0a0a0a")
-        main.pack(fill="both", expand=True, padx=30, pady=20)
+        main.pack(fill="both", expand=True, padx=20, pady=15)
 
-        # Верхняя панель: логотип + меню
-        self._build_header(main)
-
-        # Контентная область
-        self.content_frame = tk.Frame(main, bg="#0a0a0a")
-        self.content_frame.pack(fill="both", expand=True, pady=(20, 0))
-
-        self._show_home_page()
-
-    def _build_header(self, parent):
-        header = tk.Frame(parent, bg="#0a0a0a", height=40)
+        # Заголовок
+        header = tk.Frame(main, bg="#0a0a0a", height=40)
         header.pack(fill="x")
         header.pack_propagate(False)
 
-        # Логотип
-        logo_frame = tk.Frame(header, bg="#0a0a0a")
-        logo_frame.pack(side="left")
-        tk.Label(logo_frame, text="XW Launcher", font=("Segoe UI", 18, "bold"),
+        tk.Label(header, text="XW Launcher", font=("Segoe UI", 16, "bold"),
                  bg="#0a0a0a", fg="#ffffff").pack(side="left")
 
-        # Меню навигации
-        nav_frame = tk.Frame(header, bg="#0a0a0a")
-        nav_frame.pack(side="left", padx=40)
+        # Профиль в правом верхнем углу
+        self._build_profile_button(header)
 
-        self.nav_buttons = {}
-        pages = [
-            ("Главная", "home"),
-            ("Новости версий", "news"),
-            ("Сборки", "modpacks"),
-            ("Моды", "mods"),
-        ]
-        for text, key in pages:
-            btn = HoverButton(nav_frame, text=text, fg="#888888", font=("Segoe UI", 12),
-                              command=lambda k=key: self._nav_click(k))
-            btn.pack(side="left", padx=15)
-            self.nav_buttons[key] = btn
+        # Основная область: сайдбар + контент
+        content = tk.Frame(main, bg="#0a0a0a")
+        content.pack(fill="both", expand=True, pady=(15, 10))
 
-        # Профиль
-        right = tk.Frame(header, bg="#0a0a0a")
+        self._build_sidebar(content)
+        self.content_frame = tk.Frame(content, bg="#0a0a0a")
+        self.content_frame.pack(side="right", fill="both", expand=True, padx=(15, 0))
+
+        # Показать стартовую страницу
+        self._show_home_page()
+
+    def _build_profile_button(self, parent):
+        right = tk.Frame(parent, bg="#0a0a0a")
         right.pack(side="right")
+
+        profile_frame = tk.Frame(right, bg="#151515")
+        profile_frame.pack(side="left")
+        tk.Label(profile_frame, bg="#151515").pack(padx=12, pady=6)  # отступы
 
         username = self._accounts[self._current_account_index]["username"]
         self.profile_btn = tk.Menubutton(
-            right, text=f"{username} ▼", font=("Segoe UI", 11),
+            profile_frame, text=f"{username} ▼", font=("Segoe UI", 11),
             bg="#151515", fg="#cccccc", bd=0, cursor="hand2",
             activebackground="#151515", activeforeground="#ffffff"
         )
@@ -220,9 +174,6 @@ class LauncherApp:
         menu.add_command(label="➕ Добавить аккаунт", command=self._add_account)
         menu.add_command(label="✏️ Управление аккаунтами", command=self._manage_accounts)
         menu.add_separator()
-        menu.add_command(label="⚙️ Настройки", command=self._show_settings)
-        menu.add_command(label="📁 Папка игры", command=lambda: os.startfile(self.minecraft_dir))
-        menu.add_separator()
         menu.add_command(label="🚪 Выход", command=self.root.quit)
         self.profile_btn.config(menu=menu)
 
@@ -233,7 +184,7 @@ class LauncherApp:
         self.profile_btn.config(text=f"{self._accounts[idx]['username']} ▼")
         self._update_profile_menu()
         if self._current_page == "home":
-            self._show_home_page()
+            self._show_home_page()  # обновить приветствие
 
     def _add_account(self):
         dialog = tk.Toplevel(self.root)
@@ -341,12 +292,56 @@ class LauncherApp:
         y = self.root.winfo_y() + (self.root.winfo_height() - h) // 2
         dialog.geometry(f"{w}x{h}+{x}+{y}")
 
+    # ---------- Сайдбар ----------
+    def _build_sidebar(self, parent):
+        sidebar = tk.Frame(parent, bg="#0a0a0a", width=180)
+        sidebar.pack(side="left", fill="y")
+        sidebar.pack_propagate(False)
+
+        nav_items = [
+            ("🏠 Главная", "home"),
+            ("📰 Новости версий", "news"),
+            ("📦 Сборки", "modpacks"),
+            ("🔧 Моды", "mods"),
+        ]
+
+        self.nav_buttons = {}
+        for text, key in nav_items:
+            frame = tk.Frame(sidebar, bg="#0a0a0a", height=44)
+            frame.pack(fill="x", pady=2)
+            frame.pack_propagate(False)
+
+            btn = HoverButton(frame, text=text, fg="#888888", font=("Segoe UI", 12),
+                              anchor="w", command=lambda k=key: self._nav_click(k))
+            btn.pack(fill="both", padx=10)
+
+            if self._current_page == key:
+                btn.config(fg="#ffffff", font=("Segoe UI", 12, "bold"))
+                tk.Frame(frame, bg="#4a9eff", width=3).place(x=0, y=6, height=32)
+
+            self.nav_buttons[key] = (frame, btn)
+
+        # Нижние кнопки
+        bottom = tk.Frame(sidebar, bg="#0a0a0a")
+        bottom.pack(side="bottom", fill="x", pady=10)
+
+        HoverButton(bottom, text="👤 Аккаунты", fg="#888888", font=("Segoe UI", 11),
+                    command=self._manage_accounts).pack(fill="x", padx=10, pady=4)
+        HoverButton(bottom, text="⚙️ Настройки", fg="#888888", font=("Segoe UI", 11),
+                    command=self._show_settings).pack(fill="x", padx=10, pady=4)
+        HoverButton(bottom, text="📁 Папка игры", fg="#888888", font=("Segoe UI", 11),
+                    command=lambda: os.startfile(self.minecraft_dir)).pack(fill="x", padx=10, pady=4)
+
     def _nav_click(self, key):
         self._current_page = key
-        # Обновить активный пункт меню
-        for k, btn in self.nav_buttons.items():
+        for k, (frame, btn) in self.nav_buttons.items():
+            # Убрать индикатор
+            for w in frame.winfo_children():
+                if isinstance(w, tk.Frame):
+                    w.destroy()
             if k == key:
                 btn.config(fg="#ffffff", font=("Segoe UI", 12, "bold"))
+                tk.Frame(frame, bg="#4a9eff", width=3).place(x=0, y=6, height=32)
             else:
                 btn.config(fg="#888888", font=("Segoe UI", 12))
 
@@ -358,11 +353,11 @@ class LauncherApp:
         }
         pages[key]()
 
+    # ---------- Страницы ----------
     def _clear_content(self):
         for w in self.content_frame.winfo_children():
             w.destroy()
 
-    # ---------- Главная страница ----------
     def _show_home_page(self):
         self._clear_content()
 
@@ -371,27 +366,26 @@ class LauncherApp:
         greet = "Доброе утро" if hour < 12 else "Добрый день" if hour < 18 else "Добрый вечер"
 
         # Приветствие
-        welcome_card = RoundedFrame(self.content_frame, bg="#151515", radius=18)
-        welcome_card.pack(fill="x", pady=(0, 25))
+        welcome = tk.Frame(self.content_frame, bg="#151515")
+        welcome.pack(fill="x", pady=(0, 20))
 
-        w_inner = welcome_card.inner_frame
-        w_content = tk.Frame(w_inner, bg="#151515")
-        w_content.pack(fill="both", padx=24, pady=20)
+        w_inner = tk.Frame(welcome, bg="#151515")
+        w_inner.pack(fill="both", padx=24, pady=20)
 
-        tk.Label(w_content, text=f"{greet}, {username}!", font=("Segoe UI", 20, "bold"),
+        tk.Label(w_inner, text=f"{greet}, {username}!", font=("Segoe UI", 20, "bold"),
                  bg="#151515", fg="#ffffff").pack(anchor="w")
-        tk.Label(w_content, text="Готовы к новым приключениям в Minecraft?",
+        tk.Label(w_inner, text="Готовы к новым приключениям в Minecraft?",
                  font=("Segoe UI", 11), bg="#151515", fg="#888888").pack(anchor="w", pady=(4, 0))
 
-        # Строка с выбором версии и аккаунта
+        # Строка выбора версии и аккаунта
         row = tk.Frame(self.content_frame, bg="#0a0a0a")
-        row.pack(fill="x", pady=(0, 25))
+        row.pack(fill="x", pady=(0, 20))
 
         # Версия
         vf = tk.Frame(row, bg="#0a0a0a")
-        vf.pack(side="left", padx=(0, 30))
+        vf.pack(side="left", padx=(0, 20))
         tk.Label(vf, text="Версия", font=("Segoe UI", 10, "bold"), bg="#0a0a0a", fg="#888888").pack(anchor="w", pady=(0, 6))
-        self.version_combo = ttk.Combobox(vf, values=self.versions, state="readonly", font=("Segoe UI", 11), width=22)
+        self.version_combo = ttk.Combobox(vf, values=self.versions, state="readonly", font=("Segoe UI", 11), width=20)
         self.version_combo.pack()
         if self.versions:
             last = self.config.get("last_version")
@@ -405,82 +399,82 @@ class LauncherApp:
         af.pack(side="left")
         tk.Label(af, text="Аккаунт", font=("Segoe UI", 10, "bold"), bg="#0a0a0a", fg="#888888").pack(anchor="w", pady=(0, 6))
         acc_names = [acc["username"] for acc in self._accounts]
-        self.account_combo = ttk.Combobox(af, values=acc_names, state="readonly", font=("Segoe UI", 11), width=22)
+        self.account_combo = ttk.Combobox(af, values=acc_names, state="readonly", font=("Segoe UI", 11), width=20)
         self.account_combo.set(self._accounts[self._current_account_index]["username"])
         self.account_combo.pack()
 
         # Кнопка ИГРАТЬ
         play_btn = tk.Button(self.content_frame, text="▶ ИГРАТЬ", bg="#4a9eff", fg="#ffffff",
-                             font=("Segoe UI", 13, "bold"), bd=0, padx=50, pady=14,
+                             font=("Segoe UI", 12, "bold"), bd=0, padx=40, pady=12,
                              cursor="hand2", command=self._launch_selected)
-        play_btn.pack(pady=(0, 30))
+        play_btn.pack(pady=(0, 20))
 
-        # Две карточки в ряд
-        cards_row = tk.Frame(self.content_frame, bg="#0a0a0a")
-        cards_row.pack(fill="both", expand=True)
+        # Две информационные карточки
+        info_row = tk.Frame(self.content_frame, bg="#0a0a0a")
+        info_row.pack(fill="both", expand=True)
 
-        # Левая карточка (Сборки)
-        left_card = RoundedFrame(cards_row, bg="#151515", radius=18)
-        left_card.pack(side="left", fill="both", expand=True, padx=(0, 10))
+        # Левая карточка (сборки)
+        left = tk.Frame(info_row, bg="#151515")
+        left.pack(side="left", fill="both", expand=True, padx=(0, 8))
+        l_inner = tk.Frame(left, bg="#151515")
+        l_inner.pack(fill="both", padx=20, pady=20)
 
-        l_inner = left_card.inner_frame
-        l_content = tk.Frame(l_inner, bg="#151515")
-        l_content.pack(fill="both", padx=20, pady=20)
-
-        tk.Label(l_content, text="📦", font=("Segoe UI", 32), bg="#151515", fg="#4a9eff").pack(anchor="w")
-        tk.Label(l_content, text="Сборки модов", font=("Segoe UI", 15, "bold"),
+        tk.Label(l_inner, text="📦", font=("Segoe UI", 32), bg="#151515", fg="#4a9eff").pack(anchor="w")
+        tk.Label(l_inner, text="Сборки модов", font=("Segoe UI", 14, "bold"),
                  bg="#151515", fg="#ffffff").pack(anchor="w", pady=(8, 4))
-        tk.Label(l_content, text="Готовые сборки для любого стиля игры",
+        tk.Label(l_inner, text="Готовые сборки для любого стиля игры",
                  font=("Segoe UI", 9), bg="#151515", fg="#888888").pack(anchor="w")
 
-        # Правая карточка (Моды)
-        right_card = RoundedFrame(cards_row, bg="#151515", radius=18)
-        right_card.pack(side="right", fill="both", expand=True, padx=(10, 0))
-
-        r_inner = right_card.inner_frame
-        r_content = tk.Frame(r_inner, bg="#151515")
-        r_content.pack(fill="both", padx=20, pady=20)
+        # Правая карточка (моды)
+        right = tk.Frame(info_row, bg="#151515")
+        right.pack(side="right", fill="both", expand=True, padx=(8, 0))
+        r_inner = tk.Frame(right, bg="#151515")
+        r_inner.pack(fill="both", padx=20, pady=20)
 
         mod_count = len(self._installed_mods)
-        tk.Label(r_content, text="🔧", font=("Segoe UI", 32), bg="#151515", fg="#50c878").pack(anchor="w")
-        tk.Label(r_content, text=f"Установлено модов: {mod_count}", font=("Segoe UI", 15, "bold"),
+        tk.Label(r_inner, text="🔧", font=("Segoe UI", 32), bg="#151515", fg="#50c878").pack(anchor="w")
+        tk.Label(r_inner, text=f"Установлено модов: {mod_count}", font=("Segoe UI", 14, "bold"),
                  bg="#151515", fg="#ffffff").pack(anchor="w", pady=(8, 4))
-        tk.Label(r_content, text="Управляйте модами во вкладке Моды",
+        tk.Label(r_inner, text="Управляйте модами во вкладке Моды",
                  font=("Segoe UI", 9), bg="#151515", fg="#888888").pack(anchor="w")
 
-    # ---------- Остальные страницы (заглушки) ----------
     def _show_news_page(self):
         self._clear_content()
-        tk.Label(self.content_frame, text="Новости версий", font=("Segoe UI", 22, "bold"),
-                 bg="#0a0a0a", fg="#ffffff").pack(anchor="w", pady=(0, 20))
-        news = [
-            ("1.21.11", "Исправлены критические ошибки.", "10 апреля 2025"),
-            ("1.21", "Tricky Trials — новые испытания.", "13 июня 2024"),
+        header = tk.Frame(self.content_frame, bg="#0a0a0a")
+        header.pack(fill="x", pady=(0, 18))
+        tk.Label(header, text="Новости версий", font=("Segoe UI", 22, "bold"),
+                 bg="#0a0a0a", fg="#ffffff").pack(side="left")
+
+        # Список новостей (пример)
+        news_data = [
+            ("1.21 - Tricky Trials", "Новые испытания, моб Breeze, медные лампы.", "13 июня 2024"),
+            ("1.20.5 - Armored Paws", "Броненосцы, волчья броня.", "23 апреля 2024"),
         ]
-        for ver, desc, date in news:
-            card = RoundedFrame(self.content_frame, bg="#151515", radius=14)
+        for title, desc, date in news_data:
+            card = tk.Frame(self.content_frame, bg="#151515")
             card.pack(fill="x", pady=6)
-            inner = tk.Frame(card.inner_frame, bg="#151515")
-            inner.pack(fill="both", padx=20, pady=18)
-            tk.Label(inner, text=f"🆕 Minecraft {ver}", font=("Segoe UI", 13, "bold"),
+            inner = tk.Frame(card, bg="#151515")
+            inner.pack(fill="both", padx=22, pady=22)
+            tk.Label(inner, text=f"🆕 {title}", font=("Segoe UI", 14, "bold"),
                      bg="#151515", fg="#ffffff").pack(anchor="w")
             tk.Label(inner, text=date, font=("Segoe UI", 9), bg="#151515", fg="#4a9eff").pack(anchor="w", pady=(2, 8))
-            tk.Label(inner, text=desc, font=("Segoe UI", 10), bg="#151515", fg="#aaaaaa").pack(anchor="w")
+            tk.Label(inner, text=desc, font=("Segoe UI", 10), bg="#151515", fg="#aaaaaa", wraplength=600).pack(anchor="w")
 
     def _show_modpacks_page(self):
         self._clear_content()
         tk.Label(self.content_frame, text="Сборки модов", font=("Segoe UI", 22, "bold"),
-                 bg="#0a0a0a", fg="#ffffff").pack(anchor="w", pady=(0, 20))
+                 bg="#0a0a0a", fg="#ffffff").pack(anchor="w", pady=(0, 18))
+
         packs = [
             ("Better MC", "1.20.1", "Forge", "Улучшенный ванильный опыт", 150),
             ("All The Mods 9", "1.20.1", "Forge", "400+ модов", 420),
         ]
         for name, ver, loader, desc, cnt in packs:
-            card = RoundedFrame(self.content_frame, bg="#151515", radius=14)
+            card = tk.Frame(self.content_frame, bg="#151515")
             card.pack(fill="x", pady=6)
-            inner = tk.Frame(card.inner_frame, bg="#151515")
-            inner.pack(fill="both", padx=20, pady=18)
-            tk.Label(inner, text=name, font=("Segoe UI", 14, "bold"), bg="#151515", fg="#ffffff").pack(anchor="w")
+            inner = tk.Frame(card, bg="#151515")
+            inner.pack(fill="both", padx=20, pady=20)
+            tk.Label(inner, text=name, font=("Segoe UI", 15, "bold"), bg="#151515", fg="#ffffff").pack(anchor="w")
             tk.Label(inner, text=f"{ver} • {loader} • {cnt} модов", font=("Segoe UI", 9),
                      bg="#151515", fg="#4a9eff").pack(anchor="w", pady=(2, 8))
             tk.Label(inner, text=desc, font=("Segoe UI", 9), bg="#151515", fg="#888888").pack(anchor="w")
@@ -490,26 +484,26 @@ class LauncherApp:
     def _show_mods_page(self):
         self._clear_content()
         header = tk.Frame(self.content_frame, bg="#0a0a0a")
-        header.pack(fill="x", pady=(0, 20))
+        header.pack(fill="x", pady=(0, 18))
         tk.Label(header, text="Моды", font=("Segoe UI", 22, "bold"),
                  bg="#0a0a0a", fg="#ffffff").pack(side="left")
         tk.Button(header, text="📂 Открыть папку", bg="#2a2a2a", fg="#ffffff", bd=0, padx=15, pady=5,
                   cursor="hand2", command=self._open_mods_folder).pack(side="right")
 
         if not self._installed_mods:
-            empty = RoundedFrame(self.content_frame, bg="#151515", radius=18)
+            empty = tk.Frame(self.content_frame, bg="#151515")
             empty.pack(fill="both", expand=True)
-            einner = tk.Frame(empty.inner_frame, bg="#151515")
-            einner.pack(expand=True, padx=40, pady=40)
-            tk.Label(einner, text="📦", font=("Segoe UI", 48), bg="#151515", fg="#888888").pack()
-            tk.Label(einner, text="Нет установленных модов", font=("Segoe UI", 14, "bold"),
+            e_inner = tk.Frame(empty, bg="#151515")
+            e_inner.pack(expand=True, padx=40, pady=40)
+            tk.Label(e_inner, text="📦", font=("Segoe UI", 48), bg="#151515", fg="#888888").pack()
+            tk.Label(e_inner, text="Нет установленных модов", font=("Segoe UI", 14, "bold"),
                      bg="#151515", fg="#ffffff").pack(pady=(10, 5))
-            tk.Label(einner, text="Поместите файлы .jar в папку mods",
+            tk.Label(e_inner, text="Поместите файлы .jar в папку mods",
                      font=("Segoe UI", 10), bg="#151515", fg="#888888").pack()
-            tk.Button(einner, text="Открыть папку модов", bg="#4a9eff", fg="#ffffff", bd=0, padx=20, pady=8,
+            tk.Button(e_inner, text="Открыть папку модов", bg="#4a9eff", fg="#ffffff", bd=0, padx=20, pady=8,
                       cursor="hand2", command=self._open_mods_folder).pack(pady=(20, 0))
         else:
-            # Таблица
+            # Список
             cols = tk.Frame(self.content_frame, bg="#0a0a0a")
             cols.pack(fill="x", pady=(0, 8))
             tk.Label(cols, text="Название", font=("Segoe UI", 10, "bold"), bg="#0a0a0a", fg="#666666",
@@ -550,6 +544,7 @@ class LauncherApp:
         tk.Label(inner, text="Настройки", font=("Segoe UI", 20, "bold"),
                  bg="#151515", fg="#ffffff").pack(anchor="w", pady=(0, 24))
 
+        # Пример настроек
         settings = [
             ("Выделение памяти (MB)", "ram_allocation", "spin", (512, 16384)),
             ("Аргументы Java", "java_args", "entry", None),
@@ -612,6 +607,7 @@ class LauncherApp:
     def _launch_selected(self):
         version = self.version_combo.get()
         acc_name = self.account_combo.get()
+        # Найти аккаунт
         for i, acc in enumerate(self._accounts):
             if acc["username"] == acc_name:
                 self._current_account_index = i
