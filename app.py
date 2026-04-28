@@ -1,13 +1,15 @@
 import os
+import re
 import tkinter as tk
 from pathlib import Path
 from config import Config
 from ui_widgets import RoundedFrame, HoverButton, setup_styles
 from ui_pages import (
-    HomePage, NewsPage, ModpacksPage, ModsPage,
+    Header, Sidebar, HomePage, NewsPage, ModpacksPage, ModsPage,
     SettingsDialog, AccountsManager
 )
 from minecraft import VersionLoader, GameLauncher
+
 
 class LauncherApp:
     def __init__(self, root):
@@ -26,6 +28,7 @@ class LauncherApp:
         self._current_account_index = 0
         self._current_page = "home"
         self._installed_mods = self._scan_mods()
+        self.versions = []
 
         setup_styles()
         self.version_loader.load_versions_async(self._update_version_combobox)
@@ -37,13 +40,29 @@ class LauncherApp:
         if os.path.exists(mods_dir):
             for f in os.listdir(mods_dir):
                 if f.endswith(".jar"):
-                    mods.append({"name": f.replace(".jar", ""), "file": f, "enabled": True})
+                    base = f.replace(".jar", "")
+                    mod_ver = "Unknown"
+                    mc_ver = "Unknown"
+                    match = re.match(r'(.+)-(\d+\.\d+(?:\.\d+)?)[+_-]?(?:mc)?(\d+\.\d+(?:\.\d+)?)', base, re.IGNORECASE)
+                    if match:
+                        mod_ver = match.group(2)
+                        mc_ver = match.group(3)
+                    else:
+                        match2 = re.match(r'(.+)-(\d+\.\d+(?:\.\d+)?)', base)
+                        if match2:
+                            mc_ver = match2.group(2)
+                    mods.append({
+                        "name": base,
+                        "file": f,
+                        "mod_version": mod_ver,
+                        "mc_version": mc_ver
+                    })
         return mods
 
     def _update_version_combobox(self, versions):
-        if hasattr(self, "home_page"):
-            self.home_page.update_versions(versions)
         self.versions = versions
+        if hasattr(self, "home_page") and self.home_page:
+            self.home_page.update_versions(versions)
 
     @property
     def current_account(self):
@@ -58,7 +77,7 @@ class LauncherApp:
         self.config.last_username = self._accounts[idx]["username"]
         self.config.save()
         self._update_profile_ui()
-        if hasattr(self, "home_page"):
+        if hasattr(self, "home_page") and self.home_page:
             self.home_page.update_accounts([a["username"] for a in self._accounts], self._current_account_index)
             self.home_page.refresh_greeting()
 
@@ -69,7 +88,7 @@ class LauncherApp:
         self.config.accounts = self._accounts
         self.config.save()
         self._update_profile_ui()
-        if hasattr(self, "home_page"):
+        if hasattr(self, "home_page") and self.home_page:
             self.home_page.update_accounts([a["username"] for a in self._accounts], self._current_account_index)
             self.home_page.refresh_greeting()
 
@@ -83,13 +102,13 @@ class LauncherApp:
         self.config.accounts = self._accounts
         self.config.save()
         self._update_profile_ui()
-        if hasattr(self, "home_page"):
+        if hasattr(self, "home_page") and self.home_page:
             self.home_page.update_accounts([a["username"] for a in self._accounts], self._current_account_index)
             self.home_page.refresh_greeting()
         return True
 
     def _update_profile_ui(self):
-        if hasattr(self, "header"):
+        if hasattr(self, "header") and self.header:
             self.header.update_username(self.current_username)
 
     def _build_ui(self):
@@ -99,16 +118,12 @@ class LauncherApp:
         main = tk.Frame(self.root, bg="#0d0d0d")
         main.pack(fill="both", expand=True, padx=25, pady=20)
 
-        # Header
-        from ui_pages import Header
         self.header = Header(main, self)
         self.header.pack(fill="x")
 
         content = tk.Frame(main, bg="#0d0d0d")
         content.pack(fill="both", expand=True, pady=(15, 0))
 
-        # Sidebar
-        from ui_pages import Sidebar
         self.sidebar = Sidebar(content, self)
         self.sidebar.pack(side="left", fill="y")
 
