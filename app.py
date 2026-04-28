@@ -40,19 +40,38 @@ class LauncherApp:
         if os.path.exists(mods_dir):
             for f in os.listdir(mods_dir):
                 if f.endswith(".jar"):
-                    base = f.replace(".jar", "")
-                    mod_ver = "Unknown"
-                    mc_ver = "Unknown"
-                    match = re.match(r'(.+)-(\d+\.\d+(?:\.\d+)?)[+_-]?(?:mc)?(\d+\.\d+(?:\.\d+)?)', base, re.IGNORECASE)
-                    if match:
-                        mod_ver = match.group(2)
-                        mc_ver = match.group(3)
+                    base = f[:-4]                     # удаляем расширение
+                    mod_name = base
+                    mod_ver = "?"
+                    mc_ver = "?"
+
+                    # Шаблон 1: Имя-1.2.3-mc1.20.1 (Forge)
+                    m = re.match(r'^(.+?)-(\d+\.\d+(?:\.\d+)?(?:-[^.]*)?)[\-_+]?mc(\d+\.\d+(?:\.\d+)?)$',
+                                 base, re.IGNORECASE)
+                    if m:
+                        mod_name = m.group(1)
+                        mod_ver  = m.group(2)
+                        mc_ver   = m.group(3)
                     else:
-                        match2 = re.match(r'(.+)-(\d+\.\d+(?:\.\d+)?)', base)
-                        if match2:
-                            mc_ver = match2.group(2)
+                        # Шаблон 2: Имя-1.2.3+1.20.1 (Fabric / Quilt)
+                        m = re.match(r'^(.+?)-(\d+\.\d+(?:\.\d+)?)[+_](\d+\.\d+(?:\.\d+)?)$',
+                                     base, re.IGNORECASE)
+                        if m:
+                            mod_name = m.group(1)
+                            mod_ver  = m.group(2)
+                            mc_ver   = m.group(3)
+                        else:
+                            # Шаблон 3: Имя-1.2.3 (только версия мода)
+                            m = re.match(r'^(.+?)-(\d+\.\d+(?:\.\d+)?)$', base)
+                            if m:
+                                mod_name = m.group(1)
+                                mod_ver  = m.group(2)
+                            # Иначе оставляем значения по умолчанию
+
+                    # Очищаем название: заменяем дефисы и подчёркивания на пробелы, убираем лишние пробелы
+                    clean_name = re.sub(r'[-_]+', ' ', mod_name).strip()
                     mods.append({
-                        "name": base,
+                        "name": clean_name if clean_name else base,
                         "file": f,
                         "mod_version": mod_ver,
                         "mc_version": mc_ver

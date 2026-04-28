@@ -153,7 +153,6 @@ class HomePage(tk.Frame):
                              activebackground="#3a8eef", activeforeground="#ffffff")
         play_btn.pack(pady=(0, 30))
 
-        # Карточки в строку, но не растягиваются бесконечно по высоте
         cards_frame = tk.Frame(self, bg="#0d0d0d")
         cards_frame.pack(fill="x")
 
@@ -291,7 +290,6 @@ class ModsPage(tk.Frame):
                             activebackground="#3a8eef", activeforeground="#ffffff")
             btn.pack(pady=(20, 0))
         else:
-            # Прокручиваемая область
             canvas = tk.Canvas(self, bg="#0d0d0d", highlightthickness=0)
             scrollbar = tk.Scrollbar(self, orient="vertical", command=canvas.yview)
             scrollable_frame = tk.Frame(canvas, bg="#0d0d0d")
@@ -303,26 +301,25 @@ class ModsPage(tk.Frame):
             canvas.pack(side="left", fill="both", expand=True)
             scrollbar.pack(side="right", fill="y")
 
-            # Заголовки колонок
             cols = tk.Frame(scrollable_frame, bg="#0d0d0d")
             cols.pack(fill="x", pady=(0, 8))
             tk.Label(cols, text="Название", font=("Segoe UI", 10, "bold"), bg="#0d0d0d", fg="#666666",
-                     width=20, anchor="w").pack(side="left")
+                     width=30, anchor="w").pack(side="left")
             tk.Label(cols, text="Версия мода", font=("Segoe UI", 10, "bold"), bg="#0d0d0d", fg="#666666",
-                     width=15, anchor="w").pack(side="left")
+                     width=12, anchor="w").pack(side="left")
             tk.Label(cols, text="Для Minecraft", font=("Segoe UI", 10, "bold"), bg="#0d0d0d", fg="#666666",
-                     width=15, anchor="w").pack(side="left")
+                     width=12, anchor="w").pack(side="left")
             tk.Frame(scrollable_frame, bg="#2a2a2a", height=1).pack(fill="x", pady=5)
 
             for mod in self.app._installed_mods:
                 row = tk.Frame(scrollable_frame, bg="#0d0d0d")
                 row.pack(fill="x", pady=2)
-                tk.Label(row, text=mod.get("name", "?"), font=("Segoe UI", 10), bg="#0d0d0d", fg="#ffffff",
-                         width=20, anchor="w").pack(side="left")
+                tk.Label(row, text="📦 " + mod.get("name", "?"), font=("Segoe UI", 10), bg="#0d0d0d", fg="#ffffff",
+                         width=30, anchor="w").pack(side="left")
                 tk.Label(row, text=mod.get("mod_version", "?"), font=("Segoe UI", 10), bg="#0d0d0d", fg="#aaaaaa",
-                         width=15, anchor="w").pack(side="left")
+                         width=12, anchor="w").pack(side="left")
                 tk.Label(row, text=mod.get("mc_version", "?"), font=("Segoe UI", 10), bg="#0d0d0d", fg="#aaaaaa",
-                         width=15, anchor="w").pack(side="left")
+                         width=12, anchor="w").pack(side="left")
 
     def _open_mods_folder(self):
         mods_dir = os.path.join(self.app.minecraft_dir, "mods")
