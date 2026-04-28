@@ -58,7 +58,7 @@ class Header(tk.Frame):
 
 class Sidebar(tk.Frame):
     def __init__(self, parent, app, **kwargs):
-        super().__init__(parent, bg="#0d0d0d", width=190, **kwargs)
+        super().__init__(parent, bg="#0d0d0d", width=220, **kwargs)
         self.pack_propagate(False)
         self.app = app
         self.nav_buttons = {}
@@ -76,7 +76,7 @@ class Sidebar(tk.Frame):
             item_frame = tk.Frame(nav_frame, bg="#0d0d0d", height=44)
             item_frame.pack(fill="x", pady=3)
             item_frame.pack_propagate(False)
-            btn = HoverButton(item_frame, text=text, fg="#777777", font=("Segoe UI", 12),
+            btn = HoverButton(item_frame, text=text, fg="#666666", font=("Segoe UI", 12),
                               anchor="w", command=lambda k=key: app._show_page(k))
             btn.pack(fill="both", padx=10)
             self.nav_buttons[key] = (item_frame, btn)
@@ -88,7 +88,7 @@ class Sidebar(tk.Frame):
             ("⚙️ Настройки", lambda: SettingsDialog(app)),
             ("📁 Папка игры", lambda: os.startfile(app.minecraft_dir))
         ]:
-            HoverButton(bottom_frame, text=text, fg="#777777", font=("Segoe UI", 11),
+            HoverButton(bottom_frame, text=text, fg="#666666", font=("Segoe UI", 11),
                         anchor="w", command=cmd).pack(fill="x", padx=10, pady=4)
 
         self.set_active("home")
@@ -102,7 +102,7 @@ class Sidebar(tk.Frame):
                 btn.config(fg="#ffffff", font=("Segoe UI", 12, "bold"))
                 tk.Frame(frame, bg="#4a9eff", width=3).place(x=0, rely=0.15, height=30)
             else:
-                btn.config(fg="#777777", font=("Segoe UI", 12))
+                btn.config(fg="#666666", font=("Segoe UI", 12))
 
 
 class HomePage(tk.Frame):
@@ -300,7 +300,6 @@ class ModsPage(tk.Frame):
             canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
             canvas.configure(yscrollcommand=scrollbar.set)
 
-            # Прокрутка колёсиком мыши
             def on_mousewheel(event):
                 canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
             canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", on_mousewheel))
@@ -311,12 +310,11 @@ class ModsPage(tk.Frame):
 
             cols = tk.Frame(scrollable_frame, bg="#0d0d0d")
             cols.pack(fill="x", pady=(0, 8))
+            # Иконка – 24px квадрат
             tk.Label(cols, text="", font=("Segoe UI", 10), bg="#0d0d0d", width=3).pack(side="left")
             tk.Label(cols, text="Название", font=("Segoe UI", 10, "bold"), bg="#0d0d0d", fg="#666666",
                      width=28, anchor="w").pack(side="left")
             tk.Label(cols, text="Версия мода", font=("Segoe UI", 10, "bold"), bg="#0d0d0d", fg="#666666",
-                     width=12, anchor="w").pack(side="left")
-            tk.Label(cols, text="Для Minecraft", font=("Segoe UI", 10, "bold"), bg="#0d0d0d", fg="#666666",
                      width=12, anchor="w").pack(side="left")
             tk.Frame(scrollable_frame, bg="#2a2a2a", height=1).pack(fill="x", pady=5)
 
@@ -324,27 +322,31 @@ class ModsPage(tk.Frame):
                 row = tk.Frame(scrollable_frame, bg="#0d0d0d")
                 row.pack(fill="x", pady=2)
 
-                icon_label = tk.Label(row, bg="#0d0d0d", width=3)
-                icon_label.pack(side="left")
+                # Отображение иконки (квадрат 24x24)
                 icon_path = mod.get("icon_path")
+                icon_canvas = tk.Canvas(row, width=24, height=24, bg="#0d0d0d", highlightthickness=0)
+                icon_canvas.pack(side="left", padx=(0, 10))
                 if icon_path and os.path.exists(icon_path):
                     try:
                         if icon_path not in self.mod_icons:
                             img = tk.PhotoImage(file=icon_path)
-                            img = img.subsample(max(1, img.width() // 24), max(1, img.height() // 24))
+                            # Приводим к размеру 24x24 с сохранением пропорций
+                            w = img.width()
+                            h = img.height()
+                            factor = max(1, max(w, h) // 24)
+                            img = img.subsample(factor, factor)
+                            # Размещаем по центру
                             self.mod_icons[icon_path] = img
-                        icon_label.config(image=self.mod_icons[icon_path], text="")
-                        icon_label.image = self.mod_icons[icon_path]
+                        icon_canvas.create_image(12, 12, image=self.mod_icons[icon_path], anchor="center")
+                        icon_canvas.image = self.mod_icons[icon_path]
                     except:
-                        icon_label.config(text="🔧", fg="#888888", font=("Segoe UI", 10))
+                        icon_canvas.create_text(12, 12, text="🔧", fill="#888888", font=("Segoe UI", 10), anchor="center")
                 else:
-                    icon_label.config(text="🔧", fg="#888888", font=("Segoe UI", 10))
+                    icon_canvas.create_text(12, 12, text="🔧", fill="#888888", font=("Segoe UI", 10), anchor="center")
 
                 tk.Label(row, text=mod.get("name", "?"), font=("Segoe UI", 10), bg="#0d0d0d", fg="#ffffff",
                          width=28, anchor="w").pack(side="left")
                 tk.Label(row, text=mod.get("mod_version", "?"), font=("Segoe UI", 10), bg="#0d0d0d", fg="#aaaaaa",
-                         width=12, anchor="w").pack(side="left")
-                tk.Label(row, text=mod.get("mc_version", "?"), font=("Segoe UI", 10), bg="#0d0d0d", fg="#aaaaaa",
                          width=12, anchor="w").pack(side="left")
 
     def _open_mods_folder(self):

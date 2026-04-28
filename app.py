@@ -39,7 +39,6 @@ class LauncherApp:
         mods_dir = os.path.join(self.minecraft_dir, "mods")
         mods = []
 
-        # Папка для кэшированных иконок
         icon_cache_dir = os.path.join(self.minecraft_dir, ".xwlauncher", "mod_icons")
         os.makedirs(icon_cache_dir, exist_ok=True)
 
@@ -51,34 +50,25 @@ class LauncherApp:
                 base = f[:-4]
                 mod_name = base
                 mod_ver = "?"
-                mc_ver = "?"
 
-                # ------------------ ПАРСИНГ ВЕРСИЙ ------------------
-                # 1) Имя-1.2.3-mc1.20.1  (Forge, некоторые Fabric)
+                # Парсинг версий (только версия мода, без версии Minecraft)
                 m = re.match(r'^(.+?)-(\d+\.\d+(?:\.\d+)?(?:-[^.]*)?)[\-_+]?mc(\d+\.\d+(?:\.\d+)?)$',
                              base, re.IGNORECASE)
                 if m:
                     mod_name = m.group(1)
                     mod_ver = m.group(2)
-                    mc_ver = m.group(3)
                 else:
-                    # 2) Имя-1.2.3+1.20.1 (Fabric/Quilt без префикса mc)
                     m = re.match(r'^(.+?)-(\d+\.\d+(?:\.\d+)?)[+_](\d+\.\d+(?:\.\d+)?)$',
                                  base, re.IGNORECASE)
-                    if m and '.' in m.group(3):        # чтобы не спутать с версией без разделителя
+                    if m and '.' in m.group(3):
                         mod_name = m.group(1)
                         mod_ver = m.group(2)
-                        mc_ver = m.group(3)
                     else:
-                        # 3) Имя-1.2.3  (только версия мода, без указания MC)
                         m = re.match(r'^(.+?)-(\d+\.\d+(?:\.\d+)?)$', base)
                         if m:
                             mod_name = m.group(1)
                             mod_ver = m.group(2)
-                        # 4) Всё остальное – оставляем как есть
-                # ----------------------------------------------------
 
-                # Очищаем название: дефисы/подчёркивания → пробелы
                 clean_name = re.sub(r'[-_]+', ' ', mod_name).strip()
                 if not clean_name:
                     clean_name = base
@@ -90,10 +80,8 @@ class LauncherApp:
                 try:
                     if not os.path.exists(cached_icon):
                         with zipfile.ZipFile(jar_path, 'r') as zf:
-                            # Ищем icon.png в корне или assets/*/icon.png
                             candidates = [n for n in zf.namelist() if n.endswith("icon.png")]
                             if candidates:
-                                # Предпочитаем корневую или самую короткую
                                 candidates.sort(key=lambda x: len(x))
                                 with zf.open(candidates[0]) as src, open(cached_icon, 'wb') as dst:
                                     dst.write(src.read())
@@ -106,7 +94,6 @@ class LauncherApp:
                     "name": clean_name,
                     "file": f,
                     "mod_version": mod_ver,
-                    "mc_version": mc_ver,
                     "icon_path": icon_path
                 })
 
