@@ -263,6 +263,7 @@ class ModsPage(tk.Frame):
     def __init__(self, parent, app, **kwargs):
         super().__init__(parent, bg="#0d0d0d", **kwargs)
         self.app = app
+        self.mod_icons = {}
         self._build()
 
     def _build(self):
@@ -291,20 +292,28 @@ class ModsPage(tk.Frame):
             btn.pack(pady=(20, 0))
         else:
             canvas = tk.Canvas(self, bg="#0d0d0d", highlightthickness=0)
-            scrollbar = tk.Scrollbar(self, orient="vertical", command=canvas.yview)
+            scrollbar = tk.Scrollbar(self, orient="vertical", command=canvas.yview, width=8)
+            scrollbar.configure(bg="#2a2a2a", troughcolor="#151515", activebackground="#4a4a4a", bd=0)
             scrollable_frame = tk.Frame(canvas, bg="#0d0d0d")
 
             scrollable_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
             canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
             canvas.configure(yscrollcommand=scrollbar.set)
 
+            # Прокрутка колёсиком мыши
+            def on_mousewheel(event):
+                canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", on_mousewheel))
+            canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
+
             canvas.pack(side="left", fill="both", expand=True)
             scrollbar.pack(side="right", fill="y")
 
             cols = tk.Frame(scrollable_frame, bg="#0d0d0d")
             cols.pack(fill="x", pady=(0, 8))
+            tk.Label(cols, text="", font=("Segoe UI", 10), bg="#0d0d0d", width=3).pack(side="left")
             tk.Label(cols, text="Название", font=("Segoe UI", 10, "bold"), bg="#0d0d0d", fg="#666666",
-                     width=30, anchor="w").pack(side="left")
+                     width=28, anchor="w").pack(side="left")
             tk.Label(cols, text="Версия мода", font=("Segoe UI", 10, "bold"), bg="#0d0d0d", fg="#666666",
                      width=12, anchor="w").pack(side="left")
             tk.Label(cols, text="Для Minecraft", font=("Segoe UI", 10, "bold"), bg="#0d0d0d", fg="#666666",
@@ -314,8 +323,25 @@ class ModsPage(tk.Frame):
             for mod in self.app._installed_mods:
                 row = tk.Frame(scrollable_frame, bg="#0d0d0d")
                 row.pack(fill="x", pady=2)
-                tk.Label(row, text="📦 " + mod.get("name", "?"), font=("Segoe UI", 10), bg="#0d0d0d", fg="#ffffff",
-                         width=30, anchor="w").pack(side="left")
+
+                icon_label = tk.Label(row, bg="#0d0d0d", width=3)
+                icon_label.pack(side="left")
+                icon_path = mod.get("icon_path")
+                if icon_path and os.path.exists(icon_path):
+                    try:
+                        if icon_path not in self.mod_icons:
+                            img = tk.PhotoImage(file=icon_path)
+                            img = img.subsample(max(1, img.width() // 24), max(1, img.height() // 24))
+                            self.mod_icons[icon_path] = img
+                        icon_label.config(image=self.mod_icons[icon_path], text="")
+                        icon_label.image = self.mod_icons[icon_path]
+                    except:
+                        icon_label.config(text="🔧", fg="#888888", font=("Segoe UI", 10))
+                else:
+                    icon_label.config(text="🔧", fg="#888888", font=("Segoe UI", 10))
+
+                tk.Label(row, text=mod.get("name", "?"), font=("Segoe UI", 10), bg="#0d0d0d", fg="#ffffff",
+                         width=28, anchor="w").pack(side="left")
                 tk.Label(row, text=mod.get("mod_version", "?"), font=("Segoe UI", 10), bg="#0d0d0d", fg="#aaaaaa",
                          width=12, anchor="w").pack(side="left")
                 tk.Label(row, text=mod.get("mc_version", "?"), font=("Segoe UI", 10), bg="#0d0d0d", fg="#aaaaaa",

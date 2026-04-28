@@ -1,6 +1,7 @@
 import os
 import re
 import tkinter as tk
+import zipfile
 from pathlib import Path
 from config import Config
 from ui_widgets import RoundedFrame, HoverButton, setup_styles
@@ -37,45 +38,78 @@ class LauncherApp:
     def _scan_mods(self):
         mods_dir = os.path.join(self.minecraft_dir, "mods")
         mods = []
+
+        # Папка для кэшированных иконок
+        icon_cache_dir = os.path.join(self.minecraft_dir, ".xwlauncher", "mod_icons")
+        os.makedirs(icon_cache_dir, exist_ok=True)
+
         if os.path.exists(mods_dir):
             for f in os.listdir(mods_dir):
-                if f.endswith(".jar"):
-                    base = f[:-4]                     # удаляем расширение
-                    mod_name = base
-                    mod_ver = "?"
-                    mc_ver = "?"
+                if not f.endswith(".jar"):
+                    continue
 
-                    # Шаблон 1: Имя-1.2.3-mc1.20.1 (Forge)
-                    m = re.match(r'^(.+?)-(\d+\.\d+(?:\.\d+)?(?:-[^.]*)?)[\-_+]?mc(\d+\.\d+(?:\.\d+)?)$',
+                base = f[:-4]
+                mod_name = base
+                mod_ver = "?"
+                mc_ver = "?"
+
+                # ------------------ ПАРСИНГ ВЕРСИЙ ------------------
+                # 1) Имя-1.2.3-mc1.20.1  (Forge, некоторые Fabric)
+                m = re.match(r'^(.+?)-(\d+\.\d+(?:\.\d+)?(?:-[^.]*)?)[\-_+]?mc(\d+\.\d+(?:\.\d+)?)$',
+                             base, re.IGNORECASE)
+                if m:
+                    mod_name = m.group(1)
+                    mod_ver = m.group(2)
+                    mc_ver = m.group(3)
+                else:
+                    # 2) Имя-1.2.3+1.20.1 (Fabric/Quilt без префикса mc)
+                    m = re.match(r'^(.+?)-(\d+\.\d+(?:\.\d+)?)[+_](\d+\.\d+(?:\.\d+)?)$',
                                  base, re.IGNORECASE)
-                    if m:
+                    if m and '.' in m.group(3):        # чтобы не спутать с версией без разделителя
                         mod_name = m.group(1)
-                        mod_ver  = m.group(2)
-                        mc_ver   = m.group(3)
+                        mod_ver = m.group(2)
+                        mc_ver = m.group(3)
                     else:
-                        # Шаблон 2: Имя-1.2.3+1.20.1 (Fabric / Quilt)
-                        m = re.match(r'^(.+?)-(\d+\.\d+(?:\.\d+)?)[+_](\d+\.\d+(?:\.\d+)?)$',
-                                     base, re.IGNORECASE)
+                        # 3) Имя-1.2.3  (только версия мода, без указания MC)
+                        m = re.match(r'^(.+?)-(\d+\.\d+(?:\.\d+)?)$', base)
                         if m:
                             mod_name = m.group(1)
-                            mod_ver  = m.group(2)
-                            mc_ver   = m.group(3)
-                        else:
-                            # Шаблон 3: Имя-1.2.3 (только версия мода)
-                            m = re.match(r'^(.+?)-(\d+\.\d+(?:\.\d+)?)$', base)
-                            if m:
-                                mod_name = m.group(1)
-                                mod_ver  = m.group(2)
-                            # Иначе оставляем значения по умолчанию
+                            mod_ver = m.group(2)
+                        # 4) Всё остальное – оставляем как есть
+                # ----------------------------------------------------
 
-                    # Очищаем название: заменяем дефисы и подчёркивания на пробелы, убираем лишние пробелы
-                    clean_name = re.sub(r'[-_]+', ' ', mod_name).strip()
-                    mods.append({
-                        "name": clean_name if clean_name else base,
-                        "file": f,
-                        "mod_version": mod_ver,
-                        "mc_version": mc_ver
-                    })
+                # Очищаем название: дефисы/подчёркивания → пробелы
+                clean_name = re.sub(r'[-_]+', ' ', mod_name).strip()
+                if not clean_name:
+                    clean_name = base
+
+                # Извлечение иконки
+                icon_path = None
+                jar_path = os.path.join(mods_dir, f)
+                cached_icon = os.path.join(icon_cache_dir, base + ".png")
+                try:
+                    if not os.path.exists(cached_icon):
+                        with zipfile.ZipFile(jar_path, 'r') as zf:
+                            # Ищем icon.png в корне или assets/*/icon.png
+                            candidates = [n for n in zf.namelist() if n.endswith("icon.png")]
+                            if candidates:
+                                # Предпочитаем корневую или самую короткую
+                                candidates.sort(key=lambda x: len(x))
+                                with zf.open(candidates[0]) as src, open(cached_icon, 'wb') as dst:
+                                    dst.write(src.read())
+                    if os.path.exists(cached_icon) and os.path.getsize(cached_icon) > 0:
+                        icon_path = cached_icon
+                except (zipfile.BadZipFile, FileNotFoundError, KeyError):
+                    pass
+
+                mods.append({
+                    "name": clean_name,
+                    "file": f,
+                    "mod_version": mod_ver,
+                    "mc_version": mc_ver,
+                    "icon_path": icon_path
+                })
+
         return mods
 
     def _update_version_combobox(self, versions):
