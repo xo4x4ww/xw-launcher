@@ -4,640 +4,1048 @@ import subprocess
 import threading
 import tkinter as tk
 import time
-import webbrowser
 from pathlib import Path
 from tkinter import messagebox, ttk
-from datetime import datetime
 
 import minecraft_launcher_lib
 
 
-class HoverButton(tk.Label):
-    """Простая кнопка с эффектом при наведении"""
-    def __init__(self, parent, text, command=None, **kwargs):
-        super().__init__(parent, text=text, cursor="hand2", **kwargs)
-        self.default_fg = kwargs.get("fg", "#888888")
-        self.hover_fg = "#ffffff"
-        self.command = command
-        self.bind("<Enter>", self._on_enter)
-        self.bind("<Leave>", self._on_leave)
-        self.bind("<Button-1>", self._on_click)
-
-    def _on_enter(self, e):
-        self.config(fg=self.hover_fg)
-
-    def _on_leave(self, e):
-        self.config(fg=self.default_fg)
-
-    def _on_click(self, e):
-        if self.command:
-            self.command()
-
-
-class LauncherApp:
-    def __init__(self, root):
+class MinecraftLauncherApp:
+    def __init__(self, root: tk.Tk) -> None:
         self.root = root
-        self.root.title("XW Launcher")
-        self.root.geometry("1000x600")
-        self.root.minsize(900, 520)
-        self.root.configure(bg="#0a0a0a")
+        self.root.title("XW Minecraft Launcher")
+        self.root.geometry("1100x700")
+        self.root.minsize(900, 600)
+        self.root.resizable(True, True)
 
-        # Пути и конфигурация
         self.minecraft_dir = os.path.join(str(Path.home()), ".minecraft")
         self.config_path = Path(__file__).with_name("launcher_config.json")
         self.config = self._load_config()
-        self.versions = []
-        self._accounts = self.config.get("accounts", [{"username": "Player"}])
-        self._current_account_index = 0
-        self._installed_mods = self._scan_mods()
-        self._current_page = "home"
+        self.versions: list[str] = []
+        self._progress_max = 100
+        self._install_in_progress = False
+        self._last_progress_change_at = 0.0
+        self._last_progress_value = 0
+        self._last_watchdog_message = ""
+        self._is_fullscreen = False
+        self._theme_name = str(self.config.get("theme", "dark")).lower()
+        if self._theme_name not in {"dark", "light"}:
+            self._theme_name = "dark"
+        self._theme_colors: dict[str, str] = {}
+        self._nav_items: list[tk.Frame] = []
+        self._active_nav_index = 0
+        self._page_frames: dict[int, tk.Frame] = {}
+        self._progress_target = 0.0
+        self._progress_display = 0.0
 
-        self._load_versions_async()
+        self._apply_window_icon()
+        self._configure_styles()
         self._build_ui()
+        self._bind_shortcuts()
+        self._animate_progress()
+        self._load_versions_async()
 
-    # ---------- Конфигурация ----------
-    def _load_config(self):
-        default = {
+    def _load_config(self) -> dict:
+        default_config = {
             "last_username": "Player",
             "last_version": "",
-            "accounts": [{"username": "Player"}],
-            "ram_allocation": 2048,
-            "close_launcher": True,
+            "username_history": ["Player"],
+            "version_history": [],
+            "theme": "dark",
         }
         if not self.config_path.exists():
-            return default
+            return default_config
+
         try:
-            with open(self.config_path, "r", encoding="utf-8") as f:
-                saved = json.load(f)
-            default.update(saved)
-            if not default.get("accounts"):
-                default["accounts"] = [{"username": "Player"}]
-        except:
-            pass
-        return default
+            with self.config_path.open("r", encoding="utf-8") as config_file:
+                saved = json.load(config_file)
+        except (OSError, json.JSONDecodeError):
+            return default_config
 
-    def _save_config(self):
+        merged = default_config.copy()
+        merged.update(saved)
+        merged["username_history"] = [str(item) for item in merged.get("username_history", []) if str(item).strip()]
+        merged["version_history"] = [str(item) for item in merged.get("version_history", []) if str(item).strip()]
+        return merged
+
+    def _save_config(self) -> None:
         try:
-            self.config["accounts"] = self._accounts
-            with open(self.config_path, "w", encoding="utf-8") as f:
-                json.dump(self.config, f, ensure_ascii=False, indent=2)
-        except:
+            with self.config_path.open("w", encoding="utf-8") as config_file:
+                json.dump(self.config, config_file, ensure_ascii=False, indent=2)
+        except OSError:
+            self.status_var.set("Не удалось сохранить настройки")
+
+    def _apply_window_icon(self) -> None:
+        # Создаем собственную иконку - кубик травы Minecraft
+        icon_bitmap = """
+#define launcher_width 16
+#define launcher_height 16
+static unsigned char launcher_bits[] = {
+   0x00, 0x00, 0x80, 0x01, 0xc0, 0x03, 0xe0, 0x07,
+   0xf0, 0x0f, 0xf8, 0x1f, 0xfc, 0x3f, 0xfe, 0x7f,
+   0xfe, 0x7f, 0xfc, 0x3f, 0xf8, 0x1f, 0xf0, 0x0f,
+   0xe0, 0x07, 0xc0, 0x03, 0x80, 0x01, 0x00, 0x00
+};
+"""
+        try:
+            bitmap_image = tk.BitmapImage(data=icon_bitmap, foreground="#3b82f6", background="#0f172a")
+            self.root.iconphoto(True, bitmap_image)
+            self._bitmap_image_ref = bitmap_image
+        except tk.TclError:
             pass
 
-    def _scan_mods(self):
-        mods_dir = os.path.join(self.minecraft_dir, "mods")
-        mods = []
-        if os.path.exists(mods_dir):
-            for f in os.listdir(mods_dir):
-                if f.endswith(".jar"):
-                    mods.append({"name": f.replace(".jar", ""), "file": f, "enabled": True})
-        return mods
-
-    # ---------- Версии Minecraft ----------
-    def _load_versions_async(self):
-        def worker():
-            try:
-                manifest = minecraft_launcher_lib.utils.get_version_list()
-                vers = [v["id"] for v in manifest if v.get("type") == "release"][:20]
-            except:
-                vers = ["1.21", "1.20.6", "1.20.4", "1.20.2", "1.20.1", "1.19.4"]
-            self.versions = vers
-            self.root.after(0, self._update_version_combobox)
-        threading.Thread(target=worker, daemon=True).start()
-
-    def _update_version_combobox(self):
-        if hasattr(self, "version_combo"):
-            self.version_combo["values"] = self.versions
-            last = self.config.get("last_version")
-            if last in self.versions:
-                self.version_combo.set(last)
-            elif self.versions:
-                self.version_combo.set(self.versions[0])
-
-    # ---------- UI ----------
-    def _build_ui(self):
-        # Очистка
-        for w in self.root.winfo_children():
-            w.destroy()
-
-        # Основной контейнер
-        main = tk.Frame(self.root, bg="#0a0a0a")
-        main.pack(fill="both", expand=True, padx=20, pady=15)
-
-        # Заголовок
-        header = tk.Frame(main, bg="#0a0a0a", height=40)
-        header.pack(fill="x")
-        header.pack_propagate(False)
-
-        tk.Label(header, text="XW Launcher", font=("Segoe UI", 16, "bold"),
-                 bg="#0a0a0a", fg="#ffffff").pack(side="left")
-
-        # Профиль в правом верхнем углу
-        self._build_profile_button(header)
-
-        # Основная область: сайдбар + контент
-        content = tk.Frame(main, bg="#0a0a0a")
-        content.pack(fill="both", expand=True, pady=(15, 10))
-
-        self._build_sidebar(content)
-        self.content_frame = tk.Frame(content, bg="#0a0a0a")
-        self.content_frame.pack(side="right", fill="both", expand=True, padx=(15, 0))
-
-        # Показать стартовую страницу
-        self._show_home_page()
-
-    def _build_profile_button(self, parent):
-        right = tk.Frame(parent, bg="#0a0a0a")
-        right.pack(side="right")
-
-        profile_frame = tk.Frame(right, bg="#151515")
-        profile_frame.pack(side="left")
-        tk.Label(profile_frame, bg="#151515").pack(padx=12, pady=6)  # отступы
-
-        username = self._accounts[self._current_account_index]["username"]
-        self.profile_btn = tk.Menubutton(
-            profile_frame, text=f"{username} ▼", font=("Segoe UI", 11),
-            bg="#151515", fg="#cccccc", bd=0, cursor="hand2",
-            activebackground="#151515", activeforeground="#ffffff"
-        )
-        self.profile_btn.pack()
-        self._update_profile_menu()
-
-    def _update_profile_menu(self):
-        menu = tk.Menu(self.profile_btn, tearoff=0, bg="#151515", fg="#ffffff",
-                       activebackground="#2a2a2a", activeforeground="#ffffff")
-        for i, acc in enumerate(self._accounts):
-            check = "✓ " if i == self._current_account_index else "  "
-            menu.add_command(label=f"{check}{acc['username']}",
-                             command=lambda idx=i: self._switch_account(idx))
-        menu.add_separator()
-        menu.add_command(label="➕ Добавить аккаунт", command=self._add_account)
-        menu.add_command(label="✏️ Управление аккаунтами", command=self._manage_accounts)
-        menu.add_separator()
-        menu.add_command(label="🚪 Выход", command=self.root.quit)
-        self.profile_btn.config(menu=menu)
-
-    def _switch_account(self, idx):
-        self._current_account_index = idx
-        self.config["last_username"] = self._accounts[idx]["username"]
-        self._save_config()
-        self.profile_btn.config(text=f"{self._accounts[idx]['username']} ▼")
-        self._update_profile_menu()
-        if self._current_page == "home":
-            self._show_home_page()  # обновить приветствие
-
-    def _add_account(self):
-        dialog = tk.Toplevel(self.root)
-        dialog.title("Добавить аккаунт")
-        dialog.geometry("380x220")
-        dialog.resizable(False, False)
-        dialog.transient(self.root)
-        dialog.grab_set()
-        dialog.configure(bg="#151515")
-        self._center_dialog(dialog, 380, 220)
-
-        inner = tk.Frame(dialog, bg="#151515")
-        inner.pack(fill="both", padx=28, pady=28)
-
-        tk.Label(inner, text="Добавить оффлайн-аккаунт", font=("Segoe UI", 15, "bold"),
-                 bg="#151515", fg="#ffffff").pack(anchor="w", pady=(0, 18))
-        tk.Label(inner, text="Никнейм", font=("Segoe UI", 10),
-                 bg="#151515", fg="#aaaaaa").pack(anchor="w")
-
-        entry = tk.Entry(inner, bg="#0a0a0a", fg="#ffffff", font=("Segoe UI", 12),
-                         bd=0, insertbackground="#ffffff")
-        entry.pack(fill="x", ipady=10, pady=(6, 20))
-        entry.insert(0, f"Player{len(self._accounts)+1}")
-        entry.focus()
-        entry.select_range(0, "end")
-
-        btn_frame = tk.Frame(inner, bg="#151515")
-        btn_frame.pack(fill="x")
-
-        HoverButton(btn_frame, text="Отмена", fg="#888888", font=("Segoe UI", 10),
-                    command=dialog.destroy).pack(side="right", padx=(12, 0))
-
-        def save():
-            name = entry.get().strip()
-            if name:
-                self._accounts.append({"username": name})
-                self._save_config()
-                self._update_profile_menu()
-                dialog.destroy()
-
-        btn = tk.Button(btn_frame, text="Добавить", bg="#4a9eff", fg="#ffffff",
-                        font=("Segoe UI", 10, "bold"), bd=0, padx=20, pady=8,
-                        cursor="hand2", command=save)
-        btn.pack(side="right")
-        entry.bind("<Return>", lambda e: save())
-        dialog.bind("<Escape>", lambda e: dialog.destroy())
-
-    def _manage_accounts(self):
-        dialog = tk.Toplevel(self.root)
-        dialog.title("Управление аккаунтами")
-        dialog.geometry("420x400")
-        dialog.resizable(False, False)
-        dialog.transient(self.root)
-        dialog.grab_set()
-        dialog.configure(bg="#151515")
-        self._center_dialog(dialog, 420, 400)
-
-        inner = tk.Frame(dialog, bg="#151515")
-        inner.pack(fill="both", padx=28, pady=28)
-
-        tk.Label(inner, text="Управление аккаунтами", font=("Segoe UI", 15, "bold"),
-                 bg="#151515", fg="#ffffff").pack(anchor="w", pady=(0, 18))
-
-        list_frame = tk.Frame(inner, bg="#151515")
-        list_frame.pack(fill="both", expand=True, pady=(0, 18))
-
-        for i, acc in enumerate(self._accounts):
-            item = tk.Frame(list_frame, bg="#0a0a0a")
-            item.pack(fill="x", pady=2)
-
-            sub = tk.Frame(item, bg="#0a0a0a")
-            sub.pack(fill="both", padx=14, pady=10)
-
-            cur = " (текущий)" if i == self._current_account_index else ""
-            tk.Label(sub, text=f"{acc['username']}{cur}", font=("Segoe UI", 11),
-                     bg="#0a0a0a", fg="#ffffff").pack(side="left")
-
-            if i != self._current_account_index and len(self._accounts) > 1:
-                HoverButton(sub, text="🗑️", fg="#ff6b6b", font=("Segoe UI", 12),
-                            command=lambda idx=i: self._delete_account(idx, dialog)).pack(side="right")
-
-        HoverButton(inner, text="➕ Добавить аккаунт", fg="#4a9eff", font=("Segoe UI", 11, "bold"),
-                    command=lambda: [dialog.destroy(), self._add_account()]).pack(pady=5)
-        HoverButton(inner, text="Закрыть", fg="#888888", font=("Segoe UI", 10),
-                    command=dialog.destroy).pack(pady=(10, 0))
-        dialog.bind("<Escape>", lambda e: dialog.destroy())
-
-    def _delete_account(self, idx, dialog):
-        if len(self._accounts) <= 1:
-            messagebox.showwarning("Внимание", "Нельзя удалить последний аккаунт")
-            return
-        del self._accounts[idx]
-        if self._current_account_index >= len(self._accounts):
-            self._current_account_index = len(self._accounts) - 1
-        self.config["last_username"] = self._accounts[self._current_account_index]["username"]
-        self._save_config()
-        self.profile_btn.config(text=f"{self._accounts[self._current_account_index]['username']} ▼")
-        self._update_profile_menu()
-        dialog.destroy()
-        self._manage_accounts()
-
-    def _center_dialog(self, dialog, w, h):
-        dialog.update_idletasks()
-        x = self.root.winfo_x() + (self.root.winfo_width() - w) // 2
-        y = self.root.winfo_y() + (self.root.winfo_height() - h) // 2
-        dialog.geometry(f"{w}x{h}+{x}+{y}")
-
-    # ---------- Сайдбар ----------
-    def _build_sidebar(self, parent):
-        sidebar = tk.Frame(parent, bg="#0a0a0a", width=180)
-        sidebar.pack(side="left", fill="y")
-        sidebar.pack_propagate(False)
-
-        nav_items = [
-            ("🏠 Главная", "home"),
-            ("📰 Новости версий", "news"),
-            ("📦 Сборки", "modpacks"),
-            ("🔧 Моды", "mods"),
-        ]
-
-        self.nav_buttons = {}
-        for text, key in nav_items:
-            frame = tk.Frame(sidebar, bg="#0a0a0a", height=44)
-            frame.pack(fill="x", pady=2)
-            frame.pack_propagate(False)
-
-            btn = HoverButton(frame, text=text, fg="#888888", font=("Segoe UI", 12),
-                              anchor="w", command=lambda k=key: self._nav_click(k))
-            btn.pack(fill="both", padx=10)
-
-            if self._current_page == key:
-                btn.config(fg="#ffffff", font=("Segoe UI", 12, "bold"))
-                tk.Frame(frame, bg="#4a9eff", width=3).place(x=0, y=6, height=32)
-
-            self.nav_buttons[key] = (frame, btn)
-
-        # Нижние кнопки
-        bottom = tk.Frame(sidebar, bg="#0a0a0a")
-        bottom.pack(side="bottom", fill="x", pady=10)
-
-        HoverButton(bottom, text="👤 Аккаунты", fg="#888888", font=("Segoe UI", 11),
-                    command=self._manage_accounts).pack(fill="x", padx=10, pady=4)
-        HoverButton(bottom, text="⚙️ Настройки", fg="#888888", font=("Segoe UI", 11),
-                    command=self._show_settings).pack(fill="x", padx=10, pady=4)
-        HoverButton(bottom, text="📁 Папка игры", fg="#888888", font=("Segoe UI", 11),
-                    command=lambda: os.startfile(self.minecraft_dir)).pack(fill="x", padx=10, pady=4)
-
-    def _nav_click(self, key):
-        self._current_page = key
-        for k, (frame, btn) in self.nav_buttons.items():
-            # Убрать индикатор
-            for w in frame.winfo_children():
-                if isinstance(w, tk.Frame):
-                    w.destroy()
-            if k == key:
-                btn.config(fg="#ffffff", font=("Segoe UI", 12, "bold"))
-                tk.Frame(frame, bg="#4a9eff", width=3).place(x=0, y=6, height=32)
-            else:
-                btn.config(fg="#888888", font=("Segoe UI", 12))
-
-        pages = {
-            "home": self._show_home_page,
-            "news": self._show_news_page,
-            "modpacks": self._show_modpacks_page,
-            "mods": self._show_mods_page,
+    def _get_theme_palette(self) -> dict[str, str]:
+        if self._theme_name == "light":
+            return {
+                "bg_primary": "#f8fafc",
+                "bg_secondary": "#f1f5f9",
+                "bg_tertiary": "#e2e8f0",
+                "bg_card": "#ffffff",
+                "sidebar_bg": "#ffffff",
+                "text_primary": "#0f172a",
+                "text_secondary": "#475569",
+                "text_muted": "#94a3b8",
+                "accent": "#3b82f6",
+                "accent_hover": "#2563eb",
+                "accent_light": "#dbeafe",
+                "success": "#10b981",
+                "warning": "#f59e0b",
+                "error": "#ef4444",
+                "border": "#e2e8f0",
+                "input_bg": "#ffffff",
+                "progress_bg": "#e2e8f0",
+            }
+        return {
+            "bg_primary": "#0a0e17",
+            "bg_secondary": "#111827",
+            "bg_tertiary": "#1f2937",
+            "bg_card": "#1a2332",
+            "sidebar_bg": "#0d1421",
+            "text_primary": "#f1f5f9",
+            "text_secondary": "#9ca3af",
+            "text_muted": "#6b7280",
+            "accent": "#3b82f6",
+            "accent_hover": "#60a5fa",
+            "accent_light": "#1e3a5f",
+            "success": "#10b981",
+            "warning": "#f59e0b",
+            "error": "#ef4444",
+            "border": "#2d3748",
+            "input_bg": "#1e293b",
+            "progress_bg": "#2d3748",
         }
-        pages[key]()
 
-    # ---------- Страницы ----------
-    def _clear_content(self):
-        for w in self.content_frame.winfo_children():
-            w.destroy()
+    def _configure_styles(self) -> None:
+        style = ttk.Style()
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass
+        
+        self._theme_colors = self._get_theme_palette()
+        c = self._theme_colors
+        
+        self.root.configure(bg=c["bg_primary"])
+        
+        # Настройка стилей ttk
+        style.configure("TFrame", background=c["bg_primary"])
+        style.configure("Card.TFrame", background=c["bg_card"], relief="flat")
+        style.configure("Sidebar.TFrame", background=c["sidebar_bg"])
+        
+        style.configure("TLabel", background=c["bg_primary"], foreground=c["text_primary"])
+        style.configure("CardTitle.TLabel", background=c["bg_card"], foreground=c["text_primary"], font=("Segoe UI", 16, "bold"))
+        style.configure("CardSubtitle.TLabel", background=c["bg_card"], foreground=c["text_secondary"], font=("Segoe UI", 10))
+        style.configure("FieldLabel.TLabel", background=c["bg_card"], foreground=c["text_secondary"], font=("Segoe UI", 10))
+        style.configure("Status.TLabel", background=c["bg_card"], foreground=c["accent"], font=("Segoe UI", 9))
+        style.configure("Path.TLabel", background=c["bg_card"], foreground=c["text_muted"], font=("Segoe UI", 8))
+        
+        style.configure("Accent.TButton", 
+                       background=c["accent"], 
+                       foreground="white",
+                       borderwidth=0,
+                       focuscolor="none",
+                       font=("Segoe UI", 10, "bold"))
+        style.map("Accent.TButton",
+                 background=[("active", c["accent_hover"]), ("pressed", c["accent"])])
+        
+        style.configure("Secondary.TButton",
+                       background=c["bg_tertiary"],
+                       foreground=c["text_primary"],
+                       borderwidth=0,
+                       font=("Segoe UI", 10))
+        style.map("Secondary.TButton",
+                 background=[("active", c["border"]), ("pressed", c["bg_tertiary"])])
 
-    def _show_home_page(self):
-        self._clear_content()
+        style.configure("TCombobox",
+                       fieldbackground=c["input_bg"],
+                       background=c["input_bg"],
+                       foreground=c["text_primary"],
+                       arrowcolor=c["text_primary"])
+        style.map("TCombobox",
+                 fieldbackground=[("readonly", c["input_bg"])],
+                 selectbackground=[("readonly", c["accent"])],
+                 selectforeground=[("readonly", "white")])
 
-        username = self._accounts[self._current_account_index]["username"]
-        hour = datetime.now().hour
-        greet = "Доброе утро" if hour < 12 else "Добрый день" if hour < 18 else "Добрый вечер"
+        style.configure("TProgressbar",
+                       background=c["accent"],
+                       troughcolor=c["progress_bg"],
+                       borderwidth=0,
+                       lightcolor=c["accent"],
+                       darkcolor=c["accent"])
 
-        # Приветствие
-        welcome = tk.Frame(self.content_frame, bg="#151515")
-        welcome.pack(fill="x", pady=(0, 20))
+        style.configure("TCheckbutton",
+                       background=c["bg_card"],
+                       foreground=c["text_primary"])
+        style.map("TCheckbutton",
+                 background=[("active", c["bg_card"])])
 
-        w_inner = tk.Frame(welcome, bg="#151515")
-        w_inner.pack(fill="both", padx=24, pady=20)
+    def _create_icon(self, canvas: tk.Canvas, icon_type: str, x: int, y: int, size: int, color: str) -> None:
+        """Рисует векторные иконки на canvas"""
+        canvas.delete("all")
+        
+        if icon_type == "home":
+            # Домик
+            points = [
+                x + size//2, y + 2,  # вершина крыши
+                x + size - 2, y + size//2,  # правый угол
+                x + size - 4, y + size//2,
+                x + size - 4, y + size - 2,
+                x + 4, y + size - 2,
+                x + 4, y + size//2,
+                x + 2, y + size//2,
+            ]
+            canvas.create_polygon(points, fill=color, outline="", smooth=True)
+            # Дверь
+            canvas.create_rectangle(x + size//3, y + size*2//3, x + size*2//3, y + size - 2, 
+                                   fill=self._theme_colors["bg_primary"], outline="", width=0)
+            
+        elif icon_type == "mods":
+            # Пазл (моды)
+            piece_size = size // 3
+            # Верхний левый
+            canvas.create_rectangle(x + 2, y + 2, x + piece_size, y + piece_size, fill=color, outline="", width=0)
+            # Верхний правый
+            canvas.create_rectangle(x + piece_size*2, y + 2, x + size - 2, y + piece_size, fill=color, outline="", width=0)
+            # Нижний левый
+            canvas.create_rectangle(x + 2, y + piece_size*2, x + piece_size, y + size - 2, fill=color, outline="", width=0)
+            # Нижний правый
+            canvas.create_rectangle(x + piece_size*2, y + piece_size*2, x + size - 2, y + size - 2, fill=color, outline="", width=0)
+            # Выступы
+            canvas.create_rectangle(x + piece_size, y + 2, x + piece_size*2, y + 4, fill=color, outline="", width=0)
+            canvas.create_rectangle(x + piece_size, y + size - 4, x + piece_size*2, y + size - 2, fill=color, outline="", width=0)
+            canvas.create_rectangle(x + 2, y + piece_size, x + 4, y + piece_size*2, fill=color, outline="", width=0)
+            canvas.create_rectangle(x + size - 4, y + piece_size, x + size - 2, y + piece_size*2, fill=color, outline="", width=0)
+            
+        elif icon_type == "settings":
+            # Шестеренка
+            center_x, center_y = x + size//2, y + size//2
+            outer_r = size//2 - 2
+            inner_r = size//4
+            canvas.create_oval(center_x - inner_r, center_y - inner_r, 
+                              center_x + inner_r, center_y + inner_r, 
+                              fill="", outline=color, width=2)
+            # Зубцы
+            import math
+            for i in range(8):
+                angle = i * math.pi / 4
+                x1 = center_x + (inner_r + 2) * math.cos(angle)
+                y1 = center_y + (inner_r + 2) * math.sin(angle)
+                x2 = center_x + outer_r * math.cos(angle)
+                y2 = center_y + outer_r * math.sin(angle)
+                canvas.create_line(x1, y1, x2, y2, fill=color, width=3, capstyle="round")
+                
+        elif icon_type == "screenshots":
+            # Фотоаппарат
+            # Корпус
+            canvas.create_rectangle(x + 2, y + size//3, x + size - 2, y + size - 2, 
+                                   fill=color, outline="", width=0)
+            # Объектив
+            canvas.create_oval(x + size//3, y + size//2, x + size*2//3, y + size*2//3, 
+                              fill=self._theme_colors["bg_primary"], outline=color, width=2)
+            canvas.create_oval(x + size*2//5, y + size*3//5, x + size*3//5, y + size*7//10, 
+                              fill=color, outline="", width=0)
+            # Вспышка
+            canvas.create_rectangle(x + size*2//3, y + 2, x + size - 4, y + size//3, 
+                                   fill=color, outline="", width=0)
+            
+        elif icon_type == "help":
+            # Вопросительный знак в круге
+            canvas.create_oval(x + 2, y + 2, x + size - 2, y + size - 2, 
+                              fill="", outline=color, width=2)
+            # ?
+            canvas.create_text(x + size//2, y + size//2, text="?", 
+                              fill=color, font=("Segoe UI", size//2, "bold"))
+            
+        elif icon_type == "play":
+            # Треугольник (плей)
+            points = [
+                x + 4, y + 2,
+                x + size - 2, y + size//2,
+                x + 4, y + size - 2,
+            ]
+            canvas.create_polygon(points, fill=color, outline="", smooth=True)
+            
+        elif icon_type == "refresh":
+            # Круговая стрелка
+            import math
+            center_x, center_y = x + size//2, y + size//2
+            r = size//2 - 2
+            # Дуга
+            canvas.create_arc(x + 2, y + 2, x + size - 2, y + size - 2, 
+                             start=30, extent=300, style="arc", outline=color, width=2)
+            # Стрелка
+            arrow_x = center_x + r * 0.7
+            arrow_y = center_y - r * 0.7
+            canvas.create_line(arrow_x, arrow_y, arrow_x + 4, arrow_y - 4, fill=color, width=2)
+            canvas.create_line(arrow_x, arrow_y, arrow_x - 2, arrow_y - 5, fill=color, width=2)
 
-        tk.Label(w_inner, text=f"{greet}, {username}!", font=("Segoe UI", 20, "bold"),
-                 bg="#151515", fg="#ffffff").pack(anchor="w")
-        tk.Label(w_inner, text="Готовы к новым приключениям в Minecraft?",
-                 font=("Segoe UI", 11), bg="#151515", fg="#888888").pack(anchor="w", pady=(4, 0))
+    def _build_ui(self) -> None:
+        # Главный контейнер
+        main_container = tk.Frame(self.root, bg=self._theme_colors["bg_primary"])
+        main_container.pack(fill="both", expand=True, padx=1, pady=1)
+        
+        # Боковая панель
+        self.sidebar = tk.Frame(main_container, bg=self._theme_colors["sidebar_bg"], width=80)
+        self.sidebar.pack(side="left", fill="y")
+        self.sidebar.pack_propagate(False)
+        
+        # Логотип
+        logo_frame = tk.Frame(self.sidebar, bg=self._theme_colors["sidebar_bg"], height=80)
+        logo_frame.pack(fill="x", pady=(20, 30))
+        logo_frame.pack_propagate(False)
+        
+        logo_canvas = tk.Canvas(logo_frame, width=40, height=40, 
+                               bg=self._theme_colors["sidebar_bg"], highlightthickness=0)
+        logo_canvas.pack(expand=True)
+        self._create_icon(logo_canvas, "home", 0, 0, 40, self._theme_colors["accent"])
+        
+        # Навигационные кнопки
+        nav_items = [
+            ("home", "Главная"),
+            ("mods", "Моды"),
+            ("settings", "Настройки"),
+            ("screenshots", "Скриншоты"),
+            ("help", "Справка"),
+        ]
+        
+        for i, (icon_type, tooltip) in enumerate(nav_items):
+            nav_frame = tk.Frame(self.sidebar, bg=self._theme_colors["sidebar_bg"], height=60)
+            nav_frame.pack(fill="x", pady=5)
+            nav_frame.pack_propagate(False)
+            
+            canvas = tk.Canvas(nav_frame, width=32, height=32, 
+                              bg=self._theme_colors["sidebar_bg"], highlightthickness=0)
+            canvas.pack(expand=True)
+            
+            color = self._theme_colors["accent"] if i == self._active_nav_index else self._theme_colors["text_muted"]
+            self._create_icon(canvas, icon_type, 0, 0, 32, color)
+            
+            # Сохраняем данные для обновления
+            nav_frame.canvas = canvas
+            nav_frame.icon_type = icon_type
+            nav_frame.index = i
+            
+            # Привязываем события
+            nav_frame.bind("<Button-1>", lambda e, idx=i: self._on_nav_click(idx))
+            nav_frame.bind("<Enter>", lambda e, f=nav_frame: self._on_nav_hover(f, True))
+            nav_frame.bind("<Leave>", lambda e, f=nav_frame: self._on_nav_hover(f, False))
+            canvas.bind("<Button-1>", lambda e, idx=i: self._on_nav_click(idx))
+            canvas.bind("<Enter>", lambda e, f=nav_frame: self._on_nav_hover(f, True))
+            canvas.bind("<Leave>", lambda e, f=nav_frame: self._on_nav_hover(f, False))
+            
+            self._nav_items.append(nav_frame)
+        
+        # Основная область контента
+        self.content_area = tk.Frame(main_container, bg=self._theme_colors["bg_primary"])
+        self.content_area.pack(side="right", fill="both", expand=True)
+        
+        # Верхняя панель
+        topbar = tk.Frame(self.content_area, bg=self._theme_colors["bg_primary"], height=50)
+        topbar.pack(fill="x", padx=20, pady=(15, 5))
+        topbar.pack_propagate(False)
+        
+        # Заголовок страницы
+        self.page_title = tk.Label(topbar, text="Главная", 
+                                  font=("Segoe UI", 20, "bold"),
+                                  bg=self._theme_colors["bg_primary"],
+                                  fg=self._theme_colors["text_primary"])
+        self.page_title.pack(side="left")
+        
+        # Кнопка темы
+        theme_frame = tk.Frame(topbar, bg=self._theme_colors["bg_primary"])
+        theme_frame.pack(side="right")
+        
+        self.theme_var = tk.BooleanVar(value=self._theme_name == "dark")
+        theme_btn = ttk.Checkbutton(theme_frame, text="Темная тема", 
+                                   variable=self.theme_var, 
+                                   command=self._on_theme_toggle,
+                                   style="TCheckbutton")
+        theme_btn.pack(side="right")
+        
+        # Контейнер для страниц
+        self.page_container = tk.Frame(self.content_area, bg=self._theme_colors["bg_primary"])
+        self.page_container.pack(fill="both", expand=True, padx=20, pady=(0, 20))
+        
+        # Создаем страницы
+        self._build_pages()
+        self._show_page(0)
 
-        # Строка выбора версии и аккаунта
-        row = tk.Frame(self.content_frame, bg="#0a0a0a")
-        row.pack(fill="x", pady=(0, 20))
+    def _build_pages(self) -> None:
+        self._page_frames[0] = self._build_home_page()
+        self._page_frames[1] = self._build_mods_page()
+        self._page_frames[2] = self._build_settings_page()
+        self._page_frames[3] = self._build_screenshots_page()
+        self._page_frames[4] = self._build_help_page()
 
+    def _build_home_page(self) -> tk.Frame:
+        page = tk.Frame(self.page_container, bg=self._theme_colors["bg_primary"])
+        
+        # Заголовок с приветствием
+        welcome_frame = tk.Frame(page, bg=self._theme_colors["bg_card"])
+        welcome_frame.pack(fill="x", pady=(0, 15))
+        
+        welcome_inner = tk.Frame(welcome_frame, bg=self._theme_colors["bg_card"])
+        welcome_inner.pack(fill="both", padx=20, pady=20)
+        
+        tk.Label(welcome_inner, text="Добро пожаловать в XW Launcher!", 
+                font=("Segoe UI", 18, "bold"),
+                bg=self._theme_colors["bg_card"],
+                fg=self._theme_colors["text_primary"]).pack(anchor="w")
+        
+        tk.Label(welcome_inner, text="Запустите Minecraft с выбранными настройками",
+                font=("Segoe UI", 11),
+                bg=self._theme_colors["bg_card"],
+                fg=self._theme_colors["text_secondary"]).pack(anchor="w", pady=(5, 0))
+        
+        # Основной контент - две колонки
+        content = tk.Frame(page, bg=self._theme_colors["bg_primary"])
+        content.pack(fill="both", expand=True)
+        
+        # Левая колонка
+        left_col = tk.Frame(content, bg=self._theme_colors["bg_primary"])
+        left_col.pack(side="left", fill="both", expand=True, padx=(0, 10))
+        
+        # Форма настроек
+        form_card = tk.Frame(left_col, bg=self._theme_colors["bg_card"])
+        form_card.pack(fill="both", expand=True)
+        
+        form_inner = tk.Frame(form_card, bg=self._theme_colors["bg_card"])
+        form_inner.pack(fill="both", padx=20, pady=20)
+        
+        tk.Label(form_inner, text="Настройки запуска", 
+                font=("Segoe UI", 14, "bold"),
+                bg=self._theme_colors["bg_card"],
+                fg=self._theme_colors["text_primary"]).pack(anchor="w", pady=(0, 15))
+        
+        # Никнейм
+        tk.Label(form_inner, text="Никнейм", 
+                font=("Segoe UI", 10),
+                bg=self._theme_colors["bg_card"],
+                fg=self._theme_colors["text_secondary"]).pack(anchor="w", pady=(0, 5))
+        
+        self.username_combo = ttk.Combobox(form_inner, state="normal", font=("Segoe UI", 11))
+        self.username_combo["values"] = self.config.get("username_history", ["Player"])
+        self.username_combo.set(self.config.get("last_username", "Player"))
+        self.username_combo.pack(fill="x", pady=(0, 15))
+        
         # Версия
-        vf = tk.Frame(row, bg="#0a0a0a")
-        vf.pack(side="left", padx=(0, 20))
-        tk.Label(vf, text="Версия", font=("Segoe UI", 10, "bold"), bg="#0a0a0a", fg="#888888").pack(anchor="w", pady=(0, 6))
-        self.version_combo = ttk.Combobox(vf, values=self.versions, state="readonly", font=("Segoe UI", 11), width=20)
-        self.version_combo.pack()
-        if self.versions:
-            last = self.config.get("last_version")
-            if last in self.versions:
-                self.version_combo.set(last)
-            else:
-                self.version_combo.set(self.versions[0])
+        tk.Label(form_inner, text="Версия Minecraft", 
+                font=("Segoe UI", 10),
+                bg=self._theme_colors["bg_card"],
+                fg=self._theme_colors["text_secondary"]).pack(anchor="w", pady=(0, 5))
+        
+        self.version_combo = ttk.Combobox(form_inner, state="readonly", font=("Segoe UI", 11))
+        self.version_combo["values"] = ["Загрузка..."]
+        self.version_combo.current(0)
+        self.version_combo.pack(fill="x")
+        
+        # Кнопки действий
+        button_frame = tk.Frame(form_inner, bg=self._theme_colors["bg_card"])
+        button_frame.pack(fill="x", pady=(20, 0))
+        
+        # Кнопка Play с иконкой
+        play_frame = tk.Frame(button_frame, bg=self._theme_colors["accent"], cursor="hand2")
+        play_frame.pack(side="left", fill="x", expand=True, padx=(0, 5))
+        
+        play_canvas = tk.Canvas(play_frame, width=20, height=20, 
+                               bg=self._theme_colors["accent"], highlightthickness=0)
+        play_canvas.pack(side="left", padx=(15, 5), pady=10)
+        self._create_icon(play_canvas, "play", 0, 0, 20, "white")
+        
+        play_label = tk.Label(play_frame, text="ИГРАТЬ", 
+                             font=("Segoe UI", 11, "bold"),
+                             bg=self._theme_colors["accent"],
+                             fg="white",
+                             cursor="hand2")
+        play_label.pack(side="left", padx=(0, 15), pady=10)
+        
+        play_frame.bind("<Button-1>", lambda e: self._on_launch())
+        play_canvas.bind("<Button-1>", lambda e: self._on_launch())
+        play_label.bind("<Button-1>", lambda e: self._on_launch())
+        
+        # Кнопка Refresh с иконкой
+        refresh_frame = tk.Frame(button_frame, bg=self._theme_colors["bg_tertiary"], cursor="hand2")
+        refresh_frame.pack(side="left", padx=(5, 0))
+        
+        refresh_canvas = tk.Canvas(refresh_frame, width=20, height=20, 
+                                  bg=self._theme_colors["bg_tertiary"], highlightthickness=0)
+        refresh_canvas.pack(side="left", padx=(15, 5), pady=10)
+        self._create_icon(refresh_canvas, "refresh", 0, 0, 20, self._theme_colors["text_primary"])
+        
+        refresh_label = tk.Label(refresh_frame, text="ОБНОВИТЬ", 
+                                font=("Segoe UI", 11),
+                                bg=self._theme_colors["bg_tertiary"],
+                                fg=self._theme_colors["text_primary"],
+                                cursor="hand2")
+        refresh_label.pack(side="left", padx=(0, 15), pady=10)
+        
+        refresh_frame.bind("<Button-1>", lambda e: self._load_versions_async())
+        refresh_canvas.bind("<Button-1>", lambda e: self._load_versions_async())
+        refresh_label.bind("<Button-1>", lambda e: self._load_versions_async())
+        
+        self.launch_button = play_frame  # Для совместимости с _set_busy
+        
+        # Правая колонка
+        right_col = tk.Frame(content, bg=self._theme_colors["bg_primary"], width=350)
+        right_col.pack(side="right", fill="y", padx=(10, 0))
+        right_col.pack_propagate(False)
+        
+        # Карточка прогресса
+        progress_card = tk.Frame(right_col, bg=self._theme_colors["bg_card"])
+        progress_card.pack(fill="x", pady=(0, 15))
+        
+        progress_inner = tk.Frame(progress_card, bg=self._theme_colors["bg_card"])
+        progress_inner.pack(fill="x", padx=20, pady=20)
+        
+        tk.Label(progress_inner, text="Прогресс загрузки", 
+                font=("Segoe UI", 12, "bold"),
+                bg=self._theme_colors["bg_card"],
+                fg=self._theme_colors["text_primary"]).pack(anchor="w", pady=(0, 10))
+        
+        self.progress = ttk.Progressbar(progress_inner, mode="determinate", maximum=100)
+        self.progress.pack(fill="x", pady=(0, 5))
+        
+        self.progress_text_var = tk.StringVar(value="Готов к запуску")
+        tk.Label(progress_inner, textvariable=self.progress_text_var,
+                font=("Segoe UI", 9),
+                bg=self._theme_colors["bg_card"],
+                fg=self._theme_colors["accent"]).pack(anchor="w")
+        
+        # Карточка статуса
+        status_card = tk.Frame(right_col, bg=self._theme_colors["bg_card"])
+        status_card.pack(fill="both", expand=True)
+        
+        status_inner = tk.Frame(status_card, bg=self._theme_colors["bg_card"])
+        status_inner.pack(fill="both", padx=20, pady=20)
+        
+        tk.Label(status_inner, text="Информация", 
+                font=("Segoe UI", 12, "bold"),
+                bg=self._theme_colors["bg_card"],
+                fg=self._theme_colors["text_primary"]).pack(anchor="w", pady=(0, 10))
+        
+        self.status_var = tk.StringVar(value="Загрузка списка версий...")
+        tk.Label(status_inner, textvariable=self.status_var,
+                font=("Segoe UI", 10),
+                bg=self._theme_colors["bg_card"],
+                fg=self._theme_colors["text_secondary"],
+                wraplength=280,
+                justify="left").pack(anchor="w")
+        
+        # Путь к Minecraft
+        tk.Label(status_inner, text=f"Папка игры:\n{self.minecraft_dir}",
+                font=("Segoe UI", 8),
+                bg=self._theme_colors["bg_card"],
+                fg=self._theme_colors["text_muted"],
+                wraplength=280,
+                justify="left").pack(anchor="w", pady=(20, 0))
+        
+        # Кнопка полноэкранного режима
+        self.fullscreen_button = tk.Button(status_inner, text="◉ Полный экран (F11)",
+                                          font=("Segoe UI", 9),
+                                          bg=self._theme_colors["bg_tertiary"],
+                                          fg=self._theme_colors["text_primary"],
+                                          bd=0,
+                                          cursor="hand2",
+                                          command=self._toggle_fullscreen)
+        self.fullscreen_button.pack(fill="x", pady=(20, 0))
+        
+        return page
 
-        # Аккаунт
-        af = tk.Frame(row, bg="#0a0a0a")
-        af.pack(side="left")
-        tk.Label(af, text="Аккаунт", font=("Segoe UI", 10, "bold"), bg="#0a0a0a", fg="#888888").pack(anchor="w", pady=(0, 6))
-        acc_names = [acc["username"] for acc in self._accounts]
-        self.account_combo = ttk.Combobox(af, values=acc_names, state="readonly", font=("Segoe UI", 11), width=20)
-        self.account_combo.set(self._accounts[self._current_account_index]["username"])
-        self.account_combo.pack()
-
-        # Кнопка ИГРАТЬ
-        play_btn = tk.Button(self.content_frame, text="▶ ИГРАТЬ", bg="#4a9eff", fg="#ffffff",
-                             font=("Segoe UI", 12, "bold"), bd=0, padx=40, pady=12,
-                             cursor="hand2", command=self._launch_selected)
-        play_btn.pack(pady=(0, 20))
-
-        # Две информационные карточки
-        info_row = tk.Frame(self.content_frame, bg="#0a0a0a")
-        info_row.pack(fill="both", expand=True)
-
-        # Левая карточка (сборки)
-        left = tk.Frame(info_row, bg="#151515")
-        left.pack(side="left", fill="both", expand=True, padx=(0, 8))
-        l_inner = tk.Frame(left, bg="#151515")
-        l_inner.pack(fill="both", padx=20, pady=20)
-
-        tk.Label(l_inner, text="📦", font=("Segoe UI", 32), bg="#151515", fg="#4a9eff").pack(anchor="w")
-        tk.Label(l_inner, text="Сборки модов", font=("Segoe UI", 14, "bold"),
-                 bg="#151515", fg="#ffffff").pack(anchor="w", pady=(8, 4))
-        tk.Label(l_inner, text="Готовые сборки для любого стиля игры",
-                 font=("Segoe UI", 9), bg="#151515", fg="#888888").pack(anchor="w")
-
-        # Правая карточка (моды)
-        right = tk.Frame(info_row, bg="#151515")
-        right.pack(side="right", fill="both", expand=True, padx=(8, 0))
-        r_inner = tk.Frame(right, bg="#151515")
-        r_inner.pack(fill="both", padx=20, pady=20)
-
-        mod_count = len(self._installed_mods)
-        tk.Label(r_inner, text="🔧", font=("Segoe UI", 32), bg="#151515", fg="#50c878").pack(anchor="w")
-        tk.Label(r_inner, text=f"Установлено модов: {mod_count}", font=("Segoe UI", 14, "bold"),
-                 bg="#151515", fg="#ffffff").pack(anchor="w", pady=(8, 4))
-        tk.Label(r_inner, text="Управляйте модами во вкладке Моды",
-                 font=("Segoe UI", 9), bg="#151515", fg="#888888").pack(anchor="w")
-
-    def _show_news_page(self):
-        self._clear_content()
-        header = tk.Frame(self.content_frame, bg="#0a0a0a")
-        header.pack(fill="x", pady=(0, 18))
-        tk.Label(header, text="Новости версий", font=("Segoe UI", 22, "bold"),
-                 bg="#0a0a0a", fg="#ffffff").pack(side="left")
-
-        # Список новостей (пример)
-        news_data = [
-            ("1.21 - Tricky Trials", "Новые испытания, моб Breeze, медные лампы.", "13 июня 2024"),
-            ("1.20.5 - Armored Paws", "Броненосцы, волчья броня.", "23 апреля 2024"),
+    def _build_mods_page(self) -> tk.Frame:
+        page = tk.Frame(self.page_container, bg=self._theme_colors["bg_primary"])
+        
+        # Заголовок
+        header = tk.Frame(page, bg=self._theme_colors["bg_card"])
+        header.pack(fill="x", pady=(0, 15))
+        
+        header_inner = tk.Frame(header, bg=self._theme_colors["bg_card"])
+        header_inner.pack(fill="x", padx=20, pady=15)
+        
+        tk.Label(header_inner, text="Управление модами", 
+                font=("Segoe UI", 14, "bold"),
+                bg=self._theme_colors["bg_card"],
+                fg=self._theme_colors["text_primary"]).pack(side="left")
+        
+        tk.Button(header_inner, text="+ Добавить мод",
+                 font=("Segoe UI", 10),
+                 bg=self._theme_colors["accent"],
+                 fg="white",
+                 bd=0,
+                 padx=15,
+                 pady=8,
+                 cursor="hand2").pack(side="right")
+        
+        # Список модов
+        mods_card = tk.Frame(page, bg=self._theme_colors["bg_card"])
+        mods_card.pack(fill="both", expand=True)
+        
+        mods_inner = tk.Frame(mods_card, bg=self._theme_colors["bg_card"])
+        mods_inner.pack(fill="both", padx=20, pady=20)
+        
+        mods = [
+            ("Fabric API", "0.92.0", True),
+            ("Sodium", "0.5.8", True),
+            ("Lithium", "0.12.1", True),
+            ("Iris Shaders", "1.7.0", True),
+            ("Mod Menu", "9.0.0", True),
+            ("REI", "12.0.0", False),
         ]
-        for title, desc, date in news_data:
-            card = tk.Frame(self.content_frame, bg="#151515")
-            card.pack(fill="x", pady=6)
-            inner = tk.Frame(card, bg="#151515")
-            inner.pack(fill="both", padx=22, pady=22)
-            tk.Label(inner, text=f"🆕 {title}", font=("Segoe UI", 14, "bold"),
-                     bg="#151515", fg="#ffffff").pack(anchor="w")
-            tk.Label(inner, text=date, font=("Segoe UI", 9), bg="#151515", fg="#4a9eff").pack(anchor="w", pady=(2, 8))
-            tk.Label(inner, text=desc, font=("Segoe UI", 10), bg="#151515", fg="#aaaaaa", wraplength=600).pack(anchor="w")
+        
+        for mod_name, version, enabled in mods:
+            mod_frame = tk.Frame(mods_inner, bg=self._theme_colors["bg_secondary"])
+            mod_frame.pack(fill="x", pady=3)
+            
+            mod_inner = tk.Frame(mod_frame, bg=self._theme_colors["bg_secondary"])
+            mod_inner.pack(fill="x", padx=15, pady=10)
+            
+            tk.Label(mod_inner, text=mod_name,
+                    font=("Segoe UI", 11, "bold"),
+                    bg=self._theme_colors["bg_secondary"],
+                    fg=self._theme_colors["text_primary"]).pack(side="left")
+            
+            tk.Label(mod_inner, text=f"v{version}",
+                    font=("Segoe UI", 9),
+                    bg=self._theme_colors["bg_secondary"],
+                    fg=self._theme_colors["text_muted"]).pack(side="left", padx=(10, 0))
+            
+            status_color = self._theme_colors["success"] if enabled else self._theme_colors["error"]
+            status_text = "● Активен" if enabled else "○ Отключен"
+            tk.Label(mod_inner, text=status_text,
+                    font=("Segoe UI", 9),
+                    bg=self._theme_colors["bg_secondary"],
+                    fg=status_color).pack(side="right")
+        
+        return page
 
-    def _show_modpacks_page(self):
-        self._clear_content()
-        tk.Label(self.content_frame, text="Сборки модов", font=("Segoe UI", 22, "bold"),
-                 bg="#0a0a0a", fg="#ffffff").pack(anchor="w", pady=(0, 18))
-
-        packs = [
-            ("Better MC", "1.20.1", "Forge", "Улучшенный ванильный опыт", 150),
-            ("All The Mods 9", "1.20.1", "Forge", "400+ модов", 420),
-        ]
-        for name, ver, loader, desc, cnt in packs:
-            card = tk.Frame(self.content_frame, bg="#151515")
-            card.pack(fill="x", pady=6)
-            inner = tk.Frame(card, bg="#151515")
-            inner.pack(fill="both", padx=20, pady=20)
-            tk.Label(inner, text=name, font=("Segoe UI", 15, "bold"), bg="#151515", fg="#ffffff").pack(anchor="w")
-            tk.Label(inner, text=f"{ver} • {loader} • {cnt} модов", font=("Segoe UI", 9),
-                     bg="#151515", fg="#4a9eff").pack(anchor="w", pady=(2, 8))
-            tk.Label(inner, text=desc, font=("Segoe UI", 9), bg="#151515", fg="#888888").pack(anchor="w")
-            tk.Button(inner, text="Установить", bg="#2a2a2a", fg="#ffffff", bd=0, padx=15, pady=5,
-                      cursor="hand2").pack(anchor="w", pady=(12, 0))
-
-    def _show_mods_page(self):
-        self._clear_content()
-        header = tk.Frame(self.content_frame, bg="#0a0a0a")
-        header.pack(fill="x", pady=(0, 18))
-        tk.Label(header, text="Моды", font=("Segoe UI", 22, "bold"),
-                 bg="#0a0a0a", fg="#ffffff").pack(side="left")
-        tk.Button(header, text="📂 Открыть папку", bg="#2a2a2a", fg="#ffffff", bd=0, padx=15, pady=5,
-                  cursor="hand2", command=self._open_mods_folder).pack(side="right")
-
-        if not self._installed_mods:
-            empty = tk.Frame(self.content_frame, bg="#151515")
-            empty.pack(fill="both", expand=True)
-            e_inner = tk.Frame(empty, bg="#151515")
-            e_inner.pack(expand=True, padx=40, pady=40)
-            tk.Label(e_inner, text="📦", font=("Segoe UI", 48), bg="#151515", fg="#888888").pack()
-            tk.Label(e_inner, text="Нет установленных модов", font=("Segoe UI", 14, "bold"),
-                     bg="#151515", fg="#ffffff").pack(pady=(10, 5))
-            tk.Label(e_inner, text="Поместите файлы .jar в папку mods",
-                     font=("Segoe UI", 10), bg="#151515", fg="#888888").pack()
-            tk.Button(e_inner, text="Открыть папку модов", bg="#4a9eff", fg="#ffffff", bd=0, padx=20, pady=8,
-                      cursor="hand2", command=self._open_mods_folder).pack(pady=(20, 0))
-        else:
-            # Список
-            cols = tk.Frame(self.content_frame, bg="#0a0a0a")
-            cols.pack(fill="x", pady=(0, 8))
-            tk.Label(cols, text="Название", font=("Segoe UI", 10, "bold"), bg="#0a0a0a", fg="#666666",
-                     width=40, anchor="w").pack(side="left")
-            tk.Label(cols, text="Статус", font=("Segoe UI", 10, "bold"), bg="#0a0a0a", fg="#666666",
-                     width=15, anchor="w").pack(side="left")
-            tk.Frame(self.content_frame, bg="#2a2a2a", height=1).pack(fill="x", pady=5)
-
-            for mod in self._installed_mods:
-                row = tk.Frame(self.content_frame, bg="#0a0a0a")
-                row.pack(fill="x", pady=2)
-                tk.Label(row, text=mod["name"], font=("Segoe UI", 10), bg="#0a0a0a", fg="#ffffff",
-                         width=40, anchor="w").pack(side="left")
-                status = "✓ Включен" if mod["enabled"] else "✗ Отключен"
-                color = "#50c878" if mod["enabled"] else "#ff6b6b"
-                tk.Label(row, text=status, font=("Segoe UI", 9), bg="#0a0a0a", fg=color,
-                         width=15, anchor="w").pack(side="left")
-
-    def _open_mods_folder(self):
-        mods_dir = os.path.join(self.minecraft_dir, "mods")
-        os.makedirs(mods_dir, exist_ok=True)
-        os.startfile(mods_dir)
-
-    # ---------- Настройки ----------
-    def _show_settings(self):
-        dialog = tk.Toplevel(self.root)
-        dialog.title("Настройки")
-        dialog.geometry("500x450")
-        dialog.resizable(False, False)
-        dialog.transient(self.root)
-        dialog.grab_set()
-        dialog.configure(bg="#151515")
-        self._center_dialog(dialog, 500, 450)
-
-        inner = tk.Frame(dialog, bg="#151515")
+    def _build_settings_page(self) -> tk.Frame:
+        page = tk.Frame(self.page_container, bg=self._theme_colors["bg_primary"])
+        
+        card = tk.Frame(page, bg=self._theme_colors["bg_card"])
+        card.pack(fill="both", expand=True)
+        
+        inner = tk.Frame(card, bg=self._theme_colors["bg_card"])
         inner.pack(fill="both", padx=30, pady=30)
-
-        tk.Label(inner, text="Настройки", font=("Segoe UI", 20, "bold"),
-                 bg="#151515", fg="#ffffff").pack(anchor="w", pady=(0, 24))
-
-        # Пример настроек
+        
+        tk.Label(inner, text="Настройки лаунчера", 
+                font=("Segoe UI", 16, "bold"),
+                bg=self._theme_colors["bg_card"],
+                fg=self._theme_colors["text_primary"]).pack(anchor="w", pady=(0, 20))
+        
         settings = [
-            ("Выделение памяти (MB)", "ram_allocation", "spin", (512, 16384)),
-            ("Аргументы Java", "java_args", "entry", None),
-            ("Закрывать лаунчер при запуске", "close_launcher", "check", None),
+            ("Показывать консоль при запуске", False),
+            ("Скрывать лаунчер при старте игры", True),
+            ("Уведомлять об обновлениях", True),
+            ("Автоматически проверять Java", True),
+            ("Запоминать последний мир", False),
         ]
-        widgets = {}
-        for label, key, typ, opts in settings:
-            row = tk.Frame(inner, bg="#151515")
-            row.pack(fill="x", pady=4)
-            tk.Label(row, text=label, font=("Segoe UI", 10), bg="#151515", fg="#aaaaaa",
-                     width=28, anchor="w").pack(side="left")
-            if typ == "spin":
-                var = tk.IntVar(value=self.config.get(key, 2048))
-                tk.Spinbox(row, from_=opts[0], to=opts[1], textvariable=var, width=10,
-                           bg="#0a0a0a", fg="#ffffff", bd=0).pack(side="left")
-                widgets[key] = var
-            elif typ == "entry":
-                var = tk.StringVar(value=self.config.get(key, ""))
-                tk.Entry(row, textvariable=var, bg="#0a0a0a", fg="#ffffff", bd=0, width=30).pack(side="left", ipady=6)
-                widgets[key] = var
-            elif typ == "check":
-                var = tk.BooleanVar(value=self.config.get(key, False))
-                tk.Checkbutton(row, variable=var, bg="#151515", activebackground="#151515").pack(side="left")
-                widgets[key] = var
+        
+        self.setting_vars = []
+        for text, default in settings:
+            var = tk.BooleanVar(value=default)
+            self.setting_vars.append(var)
+            
+            cb = ttk.Checkbutton(inner, text=text, variable=var)
+            cb.pack(anchor="w", pady=8)
+        
+        # Кнопка сохранения
+        tk.Button(inner, text="Сохранить настройки",
+                 font=("Segoe UI", 10, "bold"),
+                 bg=self._theme_colors["accent"],
+                 fg="white",
+                 bd=0,
+                 padx=20,
+                 pady=10,
+                 cursor="hand2").pack(anchor="w", pady=(20, 0))
+        
+        return page
 
-        # Папка игры
-        f_frame = tk.Frame(inner, bg="#151515")
-        f_frame.pack(fill="x", pady=(15, 0))
-        tk.Label(f_frame, text="Папка игры:", font=("Segoe UI", 10, "bold"),
-                 bg="#151515", fg="#4a9eff").pack(anchor="w")
-        tk.Label(f_frame, text=self.minecraft_dir, font=("Segoe UI", 9),
-                 bg="#151515", fg="#888888").pack(anchor="w", pady=(2, 0))
-        HoverButton(f_frame, text="📂 Открыть", fg="#4a9eff", font=("Segoe UI", 9),
-                    command=lambda: os.startfile(self.minecraft_dir)).pack(anchor="w", pady=(5, 0))
+    def _build_screenshots_page(self) -> tk.Frame:
+        page = tk.Frame(self.page_container, bg=self._theme_colors["bg_primary"])
+        
+        card = tk.Frame(page, bg=self._theme_colors["bg_card"])
+        card.pack(fill="both", expand=True)
+        
+        inner = tk.Frame(card, bg=self._theme_colors["bg_card"])
+        inner.pack(fill="both", padx=30, pady=30)
+        
+        tk.Label(inner, text="Галерея скриншотов", 
+                font=("Segoe UI", 16, "bold"),
+                bg=self._theme_colors["bg_card"],
+                fg=self._theme_colors["text_primary"]).pack(anchor="w", pady=(0, 10))
+        
+        tk.Label(inner, text="Скриншоты сохраняются в папке .minecraft/screenshots", 
+                font=("Segoe UI", 10),
+                bg=self._theme_colors["bg_card"],
+                fg=self._theme_colors["text_secondary"]).pack(anchor="w", pady=(0, 20))
+        
+        # Сетка превью
+        grid = tk.Frame(inner, bg=self._theme_colors["bg_card"])
+        grid.pack(fill="both", expand=True)
+        
+        for i in range(4):
+            grid.columnconfigure(i, weight=1)
+        
+        for i in range(4):
+            preview = tk.Frame(grid, bg=self._theme_colors["bg_secondary"], 
+                              width=150, height=120)
+            preview.grid(row=0, column=i, padx=5, pady=5, sticky="nsew")
+            preview.pack_propagate(False)
+            
+            tk.Label(preview, text="🖼️",
+                    font=("Segoe UI", 24),
+                    bg=self._theme_colors["bg_secondary"],
+                    fg=self._theme_colors["text_muted"]).pack(expand=True)
+            
+            tk.Label(preview, text=f"Скриншот {i+1}",
+                    font=("Segoe UI", 8),
+                    bg=self._theme_colors["bg_secondary"],
+                    fg=self._theme_colors["text_secondary"]).pack()
+        
+        return page
 
-        # Кнопки
-        btn_frame = tk.Frame(inner, bg="#151515")
-        btn_frame.pack(fill="x", pady=(20, 0))
-        HoverButton(btn_frame, text="Отмена", fg="#888888", font=("Segoe UI", 10),
-                    command=dialog.destroy).pack(side="right", padx=(12, 0))
+    def _build_help_page(self) -> tk.Frame:
+        page = tk.Frame(self.page_container, bg=self._theme_colors["bg_primary"])
+        
+        card = tk.Frame(page, bg=self._theme_colors["bg_card"])
+        card.pack(fill="both", expand=True)
+        
+        inner = tk.Frame(card, bg=self._theme_colors["bg_card"])
+        inner.pack(fill="both", padx=30, pady=30)
+        
+        tk.Label(inner, text="Справка и поддержка", 
+                font=("Segoe UI", 16, "bold"),
+                bg=self._theme_colors["bg_card"],
+                fg=self._theme_colors["text_primary"]).pack(anchor="w", pady=(0, 20))
+        
+        faq_items = [
+            ("Как запустить игру?", "Выберите никнейм и версию, затем нажмите 'Играть'"),
+            ("Где находятся файлы игры?", f"В папке: {self.minecraft_dir}"),
+            ("Как обновить список версий?", "Нажмите кнопку 'Обновить' на главной странице"),
+            ("Как переключить тему?", "Используйте переключатель в правом верхнем углу"),
+            ("Полноэкранный режим", "Нажмите F11 или кнопку 'Полный экран'"),
+            ("Проблемы с запуском?", "Проверьте наличие Java и интернет-соединение"),
+        ]
+        
+        for question, answer in faq_items:
+            q_frame = tk.Frame(inner, bg=self._theme_colors["bg_card"])
+            q_frame.pack(fill="x", pady=5)
+            
+            tk.Label(q_frame, text=f"▶ {question}",
+                    font=("Segoe UI", 11, "bold"),
+                    bg=self._theme_colors["bg_card"],
+                    fg=self._theme_colors["accent"]).pack(anchor="w")
+            
+            tk.Label(q_frame, text=f"   {answer}",
+                    font=("Segoe UI", 10),
+                    bg=self._theme_colors["bg_card"],
+                    fg=self._theme_colors["text_secondary"],
+                    wraplength=500,
+                    justify="left").pack(anchor="w", pady=(2, 0))
+        
+        return page
 
-        def save():
-            for k, v in widgets.items():
-                if isinstance(v, tk.IntVar):
-                    self.config[k] = v.get()
-                elif isinstance(v, tk.StringVar):
-                    self.config[k] = v.get()
-                elif isinstance(v, tk.BooleanVar):
-                    self.config[k] = v.get()
-            self._save_config()
-            dialog.destroy()
-            messagebox.showinfo("Настройки", "Сохранено")
+    def _show_page(self, index: int) -> None:
+        for page_index, frame in self._page_frames.items():
+            if page_index == index:
+                frame.pack(fill="both", expand=True)
+            else:
+                frame.pack_forget()
+        
+        # Обновляем активную иконку
+        titles = ["Главная", "Моды", "Настройки", "Скриншоты", "Справка"]
+        self.page_title.config(text=titles[index])
+        
+        for i, nav_frame in enumerate(self._nav_items):
+            color = self._theme_colors["accent"] if i == index else self._theme_colors["text_muted"]
+            self._create_icon(nav_frame.canvas, nav_frame.icon_type, 0, 0, 32, color)
+        
+        self._active_nav_index = index
 
-        tk.Button(btn_frame, text="Сохранить", bg="#4a9eff", fg="#ffffff",
-                  font=("Segoe UI", 10, "bold"), bd=0, padx=20, pady=8,
-                  cursor="hand2", command=save).pack(side="right")
-        dialog.bind("<Escape>", lambda e: dialog.destroy())
+    def _on_nav_click(self, index: int) -> None:
+        self._show_page(index)
 
-    # ---------- Запуск ----------
-    def _launch_selected(self):
-        version = self.version_combo.get()
-        acc_name = self.account_combo.get()
-        # Найти аккаунт
-        for i, acc in enumerate(self._accounts):
-            if acc["username"] == acc_name:
-                self._current_account_index = i
-                self.config["last_username"] = acc_name
-                self.profile_btn.config(text=f"{acc_name} ▼")
-                break
+    def _on_nav_hover(self, nav_frame: tk.Frame, hover: bool) -> None:
+        if nav_frame.index == self._active_nav_index:
+            return
+        color = self._theme_colors["accent"] if hover else self._theme_colors["text_muted"]
+        self._create_icon(nav_frame.canvas, nav_frame.icon_type, 0, 0, 32, color)
+
+    def _bind_shortcuts(self) -> None:
+        self.root.bind("<F11>", self._toggle_fullscreen_event)
+        self.root.bind("<Escape>", self._exit_fullscreen_event)
+
+    def _toggle_fullscreen_event(self, _event: tk.Event) -> str:
+        self._toggle_fullscreen()
+        return "break"
+
+    def _exit_fullscreen_event(self, _event: tk.Event) -> str:
+        if self._is_fullscreen:
+            self._toggle_fullscreen()
+        return "break"
+
+    def _toggle_fullscreen(self) -> None:
+        self._is_fullscreen = not self._is_fullscreen
+        self.root.attributes("-fullscreen", self._is_fullscreen)
+        button_text = "◉ Оконный режим (F11)" if self._is_fullscreen else "◉ Полный экран (F11)"
+        self.fullscreen_button.config(text=button_text)
+
+    def _on_theme_toggle(self) -> None:
+        self._theme_name = "dark" if self.theme_var.get() else "light"
+        self.config["theme"] = self._theme_name
+        self._save_config()
+        self._configure_styles()
+        
+        # Пересоздаем интерфейс
+        for widget in self.root.winfo_children():
+            widget.destroy()
+        self._build_ui()
+        self._show_page(self._active_nav_index)
+
+    def _set_busy(self, busy: bool) -> None:
+        state = "disabled" if busy else "normal"
+        if hasattr(self, 'launch_button'):
+            for child in self.launch_button.winfo_children():
+                child.configure(state=state)
+
+    def _load_versions_async(self) -> None:
+        self._set_busy(True)
+        self._start_indeterminate_progress("Загрузка списка версий...")
+        self.status_var.set("Получение версий от Mojang...")
+        thread = threading.Thread(target=self._load_versions_worker, daemon=True)
+        thread.start()
+
+    def _load_versions_worker(self) -> None:
+        try:
+            manifest = minecraft_launcher_lib.utils.get_version_list()
+            release_versions = [item["id"] for item in manifest if item.get("type") == "release"]
+            versions = release_versions[:30]
+            if not versions:
+                raise RuntimeError("Не удалось получить релизные версии.")
+        except Exception as exc:
+            self.root.after(0, lambda: self._on_versions_error(exc))
+            return
+
+        self.root.after(0, lambda: self._on_versions_loaded(versions))
+
+    def _on_versions_loaded(self, versions: list[str]) -> None:
+        saved_versions = [item for item in self.config.get("version_history", []) if item in versions]
+        ordered_versions = saved_versions + [item for item in versions if item not in saved_versions]
+        self.versions = ordered_versions
+        self.version_combo["values"] = ordered_versions
+        last_version = self.config.get("last_version")
+        if last_version in ordered_versions:
+            self.version_combo.set(last_version)
+        else:
+            self.version_combo.current(0)
+        self._stop_progress()
+        self.status_var.set(f"✓ Загружено {len(versions)} версий")
+        self.progress_text_var.set("Готов к запуску")
+        self._set_busy(False)
+
+    def _on_versions_error(self, exc: Exception) -> None:
+        self._stop_progress()
+        self.status_var.set("❌ Ошибка загрузки версий")
+        self.version_combo["values"] = ["latest"]
+        self.version_combo.current(0)
+        self._set_busy(False)
+        messagebox.showerror("Ошибка", f"Не удалось получить версии:\n{exc}")
+
+    def _on_launch(self) -> None:
+        username = self.username_combo.get().strip()
+        version = self.version_combo.get().strip()
+
+        if not username:
+            messagebox.showwarning("Проверка", "Введите никнейм.")
+            return
+        if not version or version == "Загрузка...":
+            messagebox.showwarning("Проверка", "Выберите версию.")
+            return
+
+        self._remember_profile(username, version)
+        self._set_busy(True)
+        self._reset_progress()
+        self.status_var.set(f"⏳ Установка версии {version}...")
+        self.progress_text_var.set("Подготовка...")
+        self._install_in_progress = True
+        self._last_progress_change_at = time.time()
+        self._last_progress_value = 0
+        self._last_watchdog_message = ""
+        self._watch_install_progress()
+
+        thread = threading.Thread(
+            target=self._install_and_launch_worker,
+            args=(username, version),
+            daemon=True,
+        )
+        thread.start()
+
+    def _install_and_launch_worker(self, username: str, version: str) -> None:
+        callback = {
+            "setStatus": self._install_status_callback,
+            "setProgress": self._install_progress_callback,
+            "setMax": self._install_max_callback,
+        }
+        try:
+            minecraft_launcher_lib.install.install_minecraft_version(version, self.minecraft_dir, callback=callback)
+
+            options = {"username": username}
+            command = minecraft_launcher_lib.command.get_minecraft_command(
+                version,
+                self.minecraft_dir,
+                options,
+            )
+            subprocess.Popen(command, cwd=self.minecraft_dir)
+        except Exception as exc:
+            self.root.after(0, lambda: self._on_launch_error(exc))
+            return
+
+        self.root.after(0, lambda: self._on_launch_success(version))
+
+    def _on_launch_success(self, version: str) -> None:
+        self._install_in_progress = False
+        self.status_var.set(f"✓ Minecraft {version} запущен")
+        self._progress_target = float(self._progress_max)
+        self.progress_text_var.set("Игра запущена!")
+        self._set_busy(False)
+
+    def _on_launch_error(self, exc: Exception) -> None:
+        self._install_in_progress = False
+        self.status_var.set("❌ Ошибка запуска")
+        self.progress_text_var.set("Произошла ошибка")
+        self._set_busy(False)
+        messagebox.showerror("Ошибка запуска", f"Не удалось запустить игру:\n{exc}")
+
+    def _remember_profile(self, username: str, version: str) -> None:
+        username_history = self.config.get("username_history", [])
+        version_history = self.config.get("version_history", [])
+
+        if username in username_history:
+            username_history.remove(username)
+        if version in version_history:
+            version_history.remove(version)
+
+        username_history.insert(0, username)
+        version_history.insert(0, version)
+
+        self.config["last_username"] = username
         self.config["last_version"] = version
+        self.config["username_history"] = username_history[:8]
+        self.config["version_history"] = version_history[:15]
+
+        self.username_combo["values"] = self.config["username_history"]
         self._save_config()
 
-        if self.config.get("close_launcher", True):
-            self.root.iconify()
+    def _start_indeterminate_progress(self, text: str) -> None:
+        self.progress.configure(mode="indeterminate")
+        self.progress.start(10)
+        self.progress_text_var.set(text)
 
-        def worker():
-            try:
-                minecraft_launcher_lib.install.install_minecraft_version(version, self.minecraft_dir)
-                opts = {"username": acc_name}
-                if self.config.get("ram_allocation"):
-                    opts["ram"] = str(self.config["ram_allocation"])
-                cmd = minecraft_launcher_lib.command.get_minecraft_command(version, self.minecraft_dir, opts)
-                subprocess.Popen(cmd, cwd=self.minecraft_dir)
-            except Exception as e:
-                self.root.after(0, lambda: messagebox.showerror("Ошибка", str(e)))
-                self.root.after(0, self.root.deiconify)
+    def _stop_progress(self) -> None:
+        self.progress.stop()
+        self.progress.configure(mode="determinate", maximum=100)
+        self._progress_target = 0.0
+        self._progress_display = 0.0
+        self.progress["value"] = 0
+        self.progress_text_var.set("Готов к запуску")
 
-        threading.Thread(target=worker, daemon=True).start()
+    def _reset_progress(self) -> None:
+        self.progress.stop()
+        self._progress_max = 100
+        self.progress.configure(mode="determinate", maximum=self._progress_max)
+        self._progress_target = 0.0
+        self._progress_display = 0.0
+        self.progress["value"] = 0
+
+    def _install_status_callback(self, status: str) -> None:
+        self.root.after(0, lambda: self._update_progress_status(status))
+
+    def _install_progress_callback(self, value: int) -> None:
+        self.root.after(0, lambda: self._update_progress_value(value))
+
+    def _install_max_callback(self, value: int) -> None:
+        self.root.after(0, lambda: self._update_progress_max(value))
+
+    def _update_progress_status(self, status: str) -> None:
+        clean_status = status.replace("_", " ").strip().capitalize()
+        self.progress_text_var.set(f"📦 {clean_status}")
+        self._last_progress_change_at = time.time()
+        self._last_watchdog_message = ""
+
+    def _update_progress_value(self, value: int) -> None:
+        safe_value = max(0, min(value, self._progress_max))
+        self._progress_target = float(safe_value)
+        if safe_value != self._last_progress_value:
+            self._last_progress_change_at = time.time()
+            self._last_progress_value = safe_value
+            self._last_watchdog_message = ""
+        percent = int((safe_value / max(1, self._progress_max)) * 100)
+        self.status_var.set(f"⬇️ Загрузка... {percent}%")
+
+    def _update_progress_max(self, value: int) -> None:
+        self._progress_max = max(1, int(value))
+        self.progress.configure(mode="determinate", maximum=self._progress_max)
+        self._progress_target = 0.0
+        self._progress_display = 0.0
+        self.progress["value"] = 0
+
+    def _watch_install_progress(self) -> None:
+        if not self._install_in_progress:
+            return
+
+        idle_seconds = int(time.time() - self._last_progress_change_at)
+        if idle_seconds >= 20:
+            self.progress.configure(mode="indeterminate")
+            self.progress.start(12)
+            hint = "⏳ Медленное соединение..."
+            if idle_seconds >= 60:
+                hint = "⚠️ Проверьте интернет-соединение"
+            if hint != self._last_watchdog_message:
+                self.progress_text_var.set(hint)
+                self._last_watchdog_message = hint
+        else:
+            if str(self.progress.cget("mode")) != "determinate":
+                self.progress.stop()
+                self.progress.configure(mode="determinate", maximum=self._progress_max)
+                self.progress["value"] = self._progress_display
+
+        self.root.after(1000, self._watch_install_progress)
+
+    def _animate_progress(self) -> None:
+        if str(self.progress.cget("mode")) == "determinate":
+            if self._progress_display < self._progress_target:
+                delta = max(1.0, (self._progress_target - self._progress_display) * 0.15)
+                self._progress_display = min(self._progress_target, self._progress_display + delta)
+            elif self._progress_display > self._progress_target:
+                self._progress_display = self._progress_target
+
+            self.progress["value"] = self._progress_display
+
+        self.root.after(33, self._animate_progress)
 
 
-def main():
+def main() -> None:
     root = tk.Tk()
-    app = LauncherApp(root)
+    MinecraftLauncherApp(root)
     root.mainloop()
 
 
