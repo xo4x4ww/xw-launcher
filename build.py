@@ -4,9 +4,12 @@ import os
 
 VERSION = "0.9.1-alpha"
 NAME = "XWLauncher"
-ICON = os.path.join("assets", "icon.ico")
-VERSION_FILE = "version_info.txt"
-MAIN_SCRIPT = os.path.join("src", "main.py")
+
+# Полные пути к файлам
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ICON = os.path.join(BASE_DIR, "assets", "icon.ico")
+VERSION_FILE = os.path.join(BASE_DIR, "version_info.txt")
+MAIN_SCRIPT = os.path.join(BASE_DIR, "src", "main.py")
 
 def build():
     print(f"Сборка {NAME} v{VERSION} в .exe...")
@@ -16,11 +19,10 @@ def build():
         "--onefile",
         "--windowed",
         "--name", NAME,
-        "--distpath", "dist",
-        "--workpath", "build_temp",
-        "--specpath", "build_temp",
-        "--add-data", f"src{os.pathsep}src",
-        MAIN_SCRIPT,
+        "--distpath", os.path.join(BASE_DIR, "dist"),
+        "--workpath", os.path.join(BASE_DIR, "build_temp"),
+        "--specpath", os.path.join(BASE_DIR, "build_temp"),
+        "--paths", os.path.join(BASE_DIR, "src"),
     ]
 
     if os.path.exists(ICON):
@@ -33,17 +35,21 @@ def build():
         cmd.extend(["--version-file", VERSION_FILE])
         print(f"  Версия из файла: {VERSION_FILE}")
     else:
-        print("  Файл версии не найден")
+        print(f"  Файл версии не найден: {VERSION_FILE}")
+
+    cmd.append(MAIN_SCRIPT)
 
     print("  Сборка начата, подождите...")
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    
+    # Запускаем без capture_output чтобы видеть прогресс
+    result = subprocess.run(cmd)
 
     if result.returncode == 0:
-        exe_path = os.path.join("dist", f"{NAME}.exe")
-        print(f"  Готово! Файл создан: {exe_path}")
+        exe_path = os.path.join(BASE_DIR, "dist", f"{NAME}.exe")
+        print(f"\n  Готово! Файл создан: {exe_path}")
     else:
-        print("  Ошибка при сборке:")
-        print(result.stderr)
+        print("\n  Ошибка при сборке!")
+        print(f"  Код ошибки: {result.returncode}")
 
 if __name__ == "__main__":
     build()
