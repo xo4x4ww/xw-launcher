@@ -76,8 +76,9 @@ class Sidebar(tk.Frame):
             item_frame = tk.Frame(nav_frame, bg="#0d0d0d", height=44)
             item_frame.pack(fill="x", pady=3)
             item_frame.pack_propagate(False)
-            btn = HoverButton(item_frame, text=text, fg="#666666", font=("Segoe UI", 12),
-                              anchor="w", command=lambda k=key: app._show_page(k))
+            btn = HoverButton(item_frame, text=text, fg="#555555", bg="#0d0d0d",
+                              font=("Segoe UI", 12), anchor="w",
+                              command=lambda k=key: app._show_page(k))
             btn.pack(fill="both", padx=10)
             self.nav_buttons[key] = (item_frame, btn)
 
@@ -88,8 +89,8 @@ class Sidebar(tk.Frame):
             ("⚙️ Настройки", lambda: SettingsDialog(app)),
             ("📁 Папка игры", lambda: os.startfile(app.minecraft_dir))
         ]:
-            HoverButton(bottom_frame, text=text, fg="#666666", font=("Segoe UI", 11),
-                        anchor="w", command=cmd).pack(fill="x", padx=10, pady=4)
+            HoverButton(bottom_frame, text=text, fg="#555555", bg="#0d0d0d",
+                        font=("Segoe UI", 11), anchor="w", command=cmd).pack(fill="x", padx=10, pady=4)
 
         self.set_active("home")
 
@@ -99,10 +100,10 @@ class Sidebar(tk.Frame):
                 if isinstance(w, tk.Frame):
                     w.destroy()
             if k == key:
-                btn.config(fg="#ffffff", font=("Segoe UI", 12, "bold"))
+                btn.config(fg="#ffffff", bg="#0d0d0d", font=("Segoe UI", 12, "bold"))
                 tk.Frame(frame, bg="#4a9eff", width=3).place(x=0, rely=0.15, height=30)
             else:
-                btn.config(fg="#666666", font=("Segoe UI", 12))
+                btn.config(fg="#555555", bg="#0d0d0d", font=("Segoe UI", 12))
 
 
 class HomePage(tk.Frame):
@@ -310,7 +311,6 @@ class ModsPage(tk.Frame):
 
             cols = tk.Frame(scrollable_frame, bg="#0d0d0d")
             cols.pack(fill="x", pady=(0, 8))
-            # Иконка – 24px квадрат
             tk.Label(cols, text="", font=("Segoe UI", 10), bg="#0d0d0d", width=3).pack(side="left")
             tk.Label(cols, text="Название", font=("Segoe UI", 10, "bold"), bg="#0d0d0d", fg="#666666",
                      width=28, anchor="w").pack(side="left")
@@ -322,7 +322,6 @@ class ModsPage(tk.Frame):
                 row = tk.Frame(scrollable_frame, bg="#0d0d0d")
                 row.pack(fill="x", pady=2)
 
-                # Отображение иконки (квадрат 24x24)
                 icon_path = mod.get("icon_path")
                 icon_canvas = tk.Canvas(row, width=24, height=24, bg="#0d0d0d", highlightthickness=0)
                 icon_canvas.pack(side="left", padx=(0, 10))
@@ -330,12 +329,10 @@ class ModsPage(tk.Frame):
                     try:
                         if icon_path not in self.mod_icons:
                             img = tk.PhotoImage(file=icon_path)
-                            # Приводим к размеру 24x24 с сохранением пропорций
                             w = img.width()
                             h = img.height()
                             factor = max(1, max(w, h) // 24)
                             img = img.subsample(factor, factor)
-                            # Размещаем по центру
                             self.mod_icons[icon_path] = img
                         icon_canvas.create_image(12, 12, image=self.mod_icons[icon_path], anchor="center")
                         icon_canvas.image = self.mod_icons[icon_path]
@@ -460,7 +457,7 @@ class AccountsManager:
         btn_frame = tk.Frame(inner, bg="#1a1a1a")
         btn_frame.pack(fill="x")
 
-        HoverButton(btn_frame, text="Отмена", fg="#999999", font=("Segoe UI", 10),
+        HoverButton(btn_frame, text="Отмена", fg="#999999", bg="#1a1a1a", font=("Segoe UI", 10),
                     command=dialog.destroy).pack(side="right", padx=(12, 0))
 
         def save():
@@ -505,7 +502,7 @@ class AccountsManager:
             tk.Label(sub, text=f"{acc['username']}{cur}", font=("Segoe UI", 11),
                      bg="#0d0d0d", fg="#ffffff").pack(side="left")
             if i != self.app._current_account_index and len(self.app._accounts) > 1:
-                HoverButton(sub, text="🗑️", fg="#ff6b6b", font=("Segoe UI", 12),
+                HoverButton(sub, text="🗑️", fg="#ff6b6b", bg="#0d0d0d", font=("Segoe UI", 12),
                             command=lambda idx=i: self._delete_account(idx, dialog)).pack(side="right")
 
         add_btn = tk.Button(inner, text="➕ Добавить аккаунт", bg="#333333", fg="#ffffff",
@@ -513,7 +510,7 @@ class AccountsManager:
                             cursor="hand2", command=lambda: [dialog.destroy(), self.add_account()],
                             activebackground="#444444", activeforeground="#ffffff")
         add_btn.pack(pady=5)
-        HoverButton(inner, text="Закрыть", fg="#999999", font=("Segoe UI", 10),
+        HoverButton(inner, text="Закрыть", fg="#999999", bg="#1a1a1a", font=("Segoe UI", 10),
                     command=dialog.destroy).pack(pady=(10, 0))
         dialog.bind("<Escape>", lambda e: dialog.destroy())
 

@@ -1,3 +1,5 @@
+# app.py
+
 import os
 import re
 import tkinter as tk
@@ -15,7 +17,7 @@ from minecraft import VersionLoader, GameLauncher
 class LauncherApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("XW Launcher")
+        self.root.title("XW Launcher v0.9.0-alpha")   # <-- добавлена версия
         self.root.geometry("1000x600")
         self.root.minsize(900, 520)
         self.root.configure(bg="#0d0d0d")
